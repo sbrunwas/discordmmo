@@ -11,16 +11,10 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Run local entrypoint
-
-```bash
-python -m app
-```
-
 ## Run Discord bot
 
 ```bash
-python -c "from app.main import build_engine; from app.config import Settings, configure_logging; from app.discord_bot import run_bot; s=Settings(); configure_logging(s.dev_mode); run_bot(s.discord_token, build_engine(s))"
+python -m app
 ```
 
 ## Tests

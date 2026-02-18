@@ -4,6 +4,7 @@ import logging
 
 from app.config import Settings, configure_logging
 from app.db.store import Store
+from app.discord_bot import run_discord_bot
 from app.engine.world_engine import WorldEngine
 from app.llm.client import LLMClient
 
@@ -20,8 +21,7 @@ def main() -> None:
     configure_logging(settings.dev_mode)
     logging.getLogger(__name__).info("app_start dev_mode=%s", settings.dev_mode)
     engine = build_engine(settings)
-    print(engine.handle_message("local", "Local Tester", "!help").message)
-    print(engine.handle_message("local", "Local Tester", "!start").message)
+    run_discord_bot(engine, settings)
 
 
 if __name__ == "__main__":
