@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
 
-def death_save_roll(seed_value: int) -> int:
-    return (seed_value % 20) + 1
+
+def death_save_roll(rng: random.Random) -> int:
+    return rng.randint(1, 20)

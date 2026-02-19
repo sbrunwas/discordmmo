@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -15,21 +16,23 @@ log = logging.getLogger(__name__)
 class Store:
     def __init__(self, db_path: str) -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
         init_db(self.conn)
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
-        log.info("transaction_start")
-        try:
-            yield self.conn
-            self.conn.commit()
-            log.info("transaction_commit")
-        except Exception:
-            self.conn.rollback()
-            log.exception("transaction_rollback")
-            raise
+        with self._lock:
+            log.info("transaction_start")
+            try:
+                yield self.conn
+                self.conn.commit()
+                log.info("transaction_commit")
+            except Exception:
+                self.conn.rollback()
+                log.exception("transaction_rollback")
+                raise
 
     def write_event(self, actor_id: str, event_type: str, payload: dict[str, Any]) -> None:
         log.info("event_write actor=%s type=%s", actor_id, event_type)
@@ -47,17 +50,19 @@ class Store:
             )
 
     def get_player(self, player_id: str) -> sqlite3.Row | None:
-        return self.conn.execute("SELECT * FROM players WHERE player_id = ?", (player_id,)).fetchone()
+        with self._lock:
+            return self.conn.execute("SELECT * FROM players WHERE player_id = ?", (player_id,)).fetchone()
 
     def get_session_state(self, player_id: str) -> dict[str, Any]:
-        row = self.conn.execute(
-            """
-            SELECT mode, active_npc_id, active_encounter_id, active_thread_id, last_bot_message, repeat_count
-            FROM player_session_state
-            WHERE player_id = ?
-            """,
-            (player_id,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                """
+                SELECT mode, active_npc_id, active_encounter_id, active_thread_id, last_bot_message, repeat_count
+                FROM player_session_state
+                WHERE player_id = ?
+                """,
+                (player_id,),
+            ).fetchone()
         if row is None:
             return {
                 "mode": "explore",
@@ -115,10 +120,11 @@ class Store:
             )
 
     def get_scene_memory(self, player_id: str) -> dict[str, Any]:
-        row = self.conn.execute(
-            "SELECT scene_json FROM player_scene_memory WHERE player_id = ?",
-            (player_id,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT scene_json FROM player_scene_memory WHERE player_id = ?",
+                (player_id,),
+            ).fetchone()
         if row is None:
             return {}
         try:
@@ -144,6 +150,19 @@ class Store:
         with self.tx() as conn:
             conn.execute("UPDATE players SET location_id=? WHERE player_id=?", (location_id, player_id))
 
+    def update_player_progress(self, player_id: str, hp_delta: int = 0, xp_delta: int = 0, injury_delta: int = 0) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                UPDATE players
+                SET hp = MAX(0, hp + ?),
+                    xp = MAX(0, xp + ?),
+                    injury = MAX(0, injury + ?)
+                WHERE player_id = ?
+                """,
+                (hp_delta, xp_delta, injury_delta, player_id),
+            )
+
     def upsert_location(self, location_id: str, name: str, description: str) -> None:
         with self.tx() as conn:
             conn.execute(
@@ -152,7 +171,12 @@ class Store:
             )
 
     def get_location(self, location_id: str) -> sqlite3.Row | None:
-        return self.conn.execute("SELECT * FROM locations WHERE location_id=?", (location_id,)).fetchone()
+        with self._lock:
+            return self.conn.execute("SELECT * FROM locations WHERE location_id=?", (location_id,)).fetchone()
+
+    def list_locations(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self.conn.execute("SELECT * FROM locations ORDER BY name").fetchall()
 
     def set_arc_value(self, key: str, value: dict[str, Any]) -> None:
         with self.tx() as conn:
@@ -172,16 +196,18 @@ class Store:
             )
 
     def list_npcs_at_location(self, location_id: str) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE location_id = ? AND alive = 1 ORDER BY name",
-            (location_id,),
-        ).fetchall()
+        with self._lock:
+            return self.conn.execute(
+                "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE location_id = ? AND alive = 1 ORDER BY name",
+                (location_id,),
+            ).fetchall()
 
     def get_npc(self, npc_id: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE npc_id = ?",
-            (npc_id,),
-        ).fetchone()
+        with self._lock:
+            return self.conn.execute(
+                "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE npc_id = ?",
+                (npc_id,),
+            ).fetchone()
 
     def upsert_npc_profile(self, npc_id: str, persona_prompt: str) -> None:
         with self.tx() as conn:
@@ -191,10 +217,11 @@ class Store:
             )
 
     def get_npc_profile(self, npc_id: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT npc_id, persona_prompt FROM npc_profiles WHERE npc_id = ?",
-            (npc_id,),
-        ).fetchone()
+        with self._lock:
+            return self.conn.execute(
+                "SELECT npc_id, persona_prompt FROM npc_profiles WHERE npc_id = ?",
+                (npc_id,),
+            ).fetchone()
 
     def append_npc_dialogue(self, npc_id: str, player_id: str, role: str, content: str) -> None:
         with self.tx() as conn:
@@ -207,27 +234,45 @@ class Store:
             )
 
     def get_npc_dialogue_history(self, npc_id: str, player_id: str, limit: int = 10) -> list[dict[str, str]]:
-        rows = self.conn.execute(
-            """
-            SELECT role, content
-            FROM npc_dialogue_memory
-            WHERE npc_id = ? AND player_id = ?
-            ORDER BY memory_id DESC
-            LIMIT ?
-            """,
-            (npc_id, player_id, limit),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT role, content
+                FROM npc_dialogue_memory
+                WHERE npc_id = ? AND player_id = ?
+                ORDER BY memory_id DESC
+                LIMIT ?
+                """,
+                (npc_id, player_id, limit),
+            ).fetchall()
         return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
 
+    def trim_npc_dialogue_history(self, npc_id: str, player_id: str, keep_last: int = 4) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                DELETE FROM npc_dialogue_memory
+                WHERE memory_id IN (
+                    SELECT memory_id
+                    FROM npc_dialogue_memory
+                    WHERE npc_id = ? AND player_id = ?
+                    ORDER BY memory_id DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (npc_id, player_id, keep_last),
+            )
+
     def get_npc_dialogue_summary(self, npc_id: str, player_id: str) -> str:
-        row = self.conn.execute(
-            """
-            SELECT summary_text
-            FROM npc_dialogue_summaries
-            WHERE npc_id = ? AND player_id = ?
-            """,
-            (npc_id, player_id),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                """
+                SELECT summary_text
+                FROM npc_dialogue_summaries
+                WHERE npc_id = ? AND player_id = ?
+                """,
+                (npc_id, player_id),
+            ).fetchone()
         if row is None:
             return ""
         return str(row["summary_text"] or "")
@@ -277,16 +322,17 @@ class Store:
             )
 
     def get_recent_events(self, actor_id: str, limit: int = 6) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            """
-            SELECT event_type, payload_json, ts
-            FROM events
-            WHERE actor_id = ?
-            ORDER BY event_id DESC
-            LIMIT ?
-            """,
-            (actor_id, limit),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT event_type, payload_json, ts
+                FROM events
+                WHERE actor_id = ?
+                ORDER BY event_id DESC
+                LIMIT ?
+                """,
+                (actor_id, limit),
+            ).fetchall()
         items: list[dict[str, Any]] = []
         for row in reversed(rows):
             try:
@@ -336,16 +382,28 @@ class Store:
             return True, None
 
     def get_latest_encounter(self, actor_id: str, location_id: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            """
-            SELECT encounter_id, actor_id, location_id, state_json
-            FROM encounters
-            WHERE actor_id = ? AND location_id = ?
-            ORDER BY rowid DESC
-            LIMIT 1
-            """,
-            (actor_id, location_id),
-        ).fetchone()
+        with self._lock:
+            return self.conn.execute(
+                """
+                SELECT encounter_id, actor_id, location_id, state_json
+                FROM encounters
+                WHERE actor_id = ? AND location_id = ?
+                ORDER BY rowid DESC
+                LIMIT 1
+                """,
+                (actor_id, location_id),
+            ).fetchone()
+
+    def get_arc_value(self, key: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.conn.execute("SELECT value_json FROM arc_state WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        try:
+            value = json.loads(row["value_json"])
+            return value if isinstance(value, dict) else None
+        except Exception:
+            return None
 
     def update_encounter_state(self, encounter_id: str, state: dict[str, Any]) -> None:
         with self.tx() as conn:

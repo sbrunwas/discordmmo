@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.config import Settings
@@ -32,12 +33,11 @@ def run_discord_bot(engine: WorldEngine, settings: Settings) -> None:
     async def on_message(message) -> None:
         if message.author == client.user:
             return
-        if not settings.dev_mode:
-            return
         channel_name = getattr(message.channel, "name", "")
         if channel_name != "bot":
             return
-        result = engine.handle_message(
+        result = await asyncio.to_thread(
+            engine.handle_message,
             str(message.author.id),
             message.author.display_name,
             message.content,

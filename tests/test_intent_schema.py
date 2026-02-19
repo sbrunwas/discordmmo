@@ -41,6 +41,8 @@ def test_parse_intent_natural_language():
 def test_parse_intent_command_variant():
     intent = parse_intent("!rest long please")
     assert intent.action == "REST_LONG"
+    assert parse_intent("!factions").action == "FACTIONS"
+    assert parse_intent("!recap arc").action == "RECAP"
 
 
 def test_parse_intent_uses_llm_when_rules_return_unknown():

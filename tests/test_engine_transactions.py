@@ -23,6 +23,18 @@ def test_start_and_move_persists(tmp_path):
     assert count >= 2
 
 
+def test_move_resolution_uses_location_alias(tmp_path):
+    store = Store(str(tmp_path / "move_alias.db"))
+    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+    move = engine.handle_message("p1", "Hero", "move to ruin")
+    assert move.ok
+    player = store.get_player("p1")
+    assert player is not None
+    assert player["location_id"] == "ruin_upper"
+
+
 def test_active_combat_state_is_handled(tmp_path):
     store = Store(str(tmp_path / "combat.db"))
     engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
@@ -80,6 +92,21 @@ def test_talk_to_npc_persists_dialogue_memory(tmp_path):
         "SELECT COUNT(*) AS c FROM npc_dialogue_memory WHERE npc_id = 'scholar_ione' AND player_id = 'p1'"
     ).fetchone()["c"]
     assert memory_rows >= 2
+
+
+def test_documented_commands_return_specific_feedback(tmp_path):
+    store = Store(str(tmp_path / "commands.db"))
+    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+
+    factions = engine.handle_message("p1", "Hero", "!factions")
+    recap = engine.handle_message("p1", "Hero", "!recap")
+    skills = engine.handle_message("p1", "Hero", "!skills")
+
+    assert "The stars do not answer" not in factions.message
+    assert "timeline" in recap.message.lower()
+    assert "prototype" in skills.message.lower()
 
 
 def test_unknown_follow_up_continues_last_npc_dialogue(tmp_path):

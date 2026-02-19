@@ -11,7 +11,7 @@ from app.llm.client import LLMClient
 
 def build_engine(settings: Settings) -> WorldEngine:
     store = Store(settings.db_path)
-    engine = WorldEngine(store, LLMClient(settings, store=store), rng_seed=settings.rng_seed if settings.dev_mode else 42)
+    engine = WorldEngine(store, LLMClient(settings, store=store), rng_seed=settings.rng_seed)
     engine.initialize_world()
     return engine
 

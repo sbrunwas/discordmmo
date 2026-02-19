@@ -14,6 +14,13 @@ log = logging.getLogger(__name__)
 COMMAND_MAP = {
     "!help": "HELP",
     "!start": "START",
+    "!stats": "STATS",
+    "!inventory": "INVENTORY",
+    "!skills": "SKILLS",
+    "!respec": "RESPEC",
+    "!factions": "FACTIONS",
+    "!recap": "RECAP",
+    "!duel": "DUEL",
     "!look": "LOOK",
     "!investigate": "INVESTIGATE",
     "!move": "MOVE",
@@ -54,7 +61,7 @@ def _parse_intent_with_llm(
     system_prompt = (
         "You convert player text into a strict game intent JSON object. "
         "Return only valid JSON with keys action, target, confidence, clarify_question. "
-        "action must be one of LOOK,MOVE,INVESTIGATE,TALK,REST_SHORT,REST_LONG,HELP,START,UNKNOWN. "
+        "action must be one of LOOK,MOVE,INVESTIGATE,TALK,REST_SHORT,REST_LONG,HELP,START,STATS,INVENTORY,SKILLS,RESPEC,FACTIONS,RECAP,DUEL,UNKNOWN. "
         "target must be string or null. confidence must be number 0..1. "
         "clarify_question must be string or null. "
         "Map social interactions (talk/speak/approach/ask) to TALK, not LOOK."
@@ -110,7 +117,7 @@ def _parse_intent_with_llm(
 def _parse_intent_explicit(text: str) -> Intent | None:
     lower = text.strip().lower()
     if not lower:
-        return Intent(action="UNKNOWN", target=None, raw_text=text)
+        return Intent(action="UNKNOWN", target=None, raw_text="")
 
     for command, mapped_action in COMMAND_MAP.items():
         if lower == command or lower.startswith(f"{command} "):
@@ -123,7 +130,10 @@ def _parse_intent_explicit(text: str) -> Intent | None:
             return intent
 
     # Imperative command style without "!"
-    match = re.match(r"^(help|start|look|investigate|move|go|talk|rest)\b(?:\s+(.*))?$", lower)
+    match = re.match(
+        r"^(help|start|stats|inventory|skills|respec|factions|recap|duel|look|investigate|move|go|talk|rest)\b(?:\s+(.*))?$",
+        lower,
+    )
     if not match:
         return None
 
@@ -133,6 +143,20 @@ def _parse_intent_explicit(text: str) -> Intent | None:
         action = "HELP"
     elif verb == "start":
         action = "START"
+    elif verb == "stats":
+        action = "STATS"
+    elif verb == "inventory":
+        action = "INVENTORY"
+    elif verb == "skills":
+        action = "SKILLS"
+    elif verb == "respec":
+        action = "RESPEC"
+    elif verb == "factions":
+        action = "FACTIONS"
+    elif verb == "recap":
+        action = "RECAP"
+    elif verb == "duel":
+        action = "DUEL"
     elif verb == "look":
         action = "LOOK"
     elif verb == "investigate":

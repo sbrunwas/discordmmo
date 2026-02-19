@@ -34,3 +34,8 @@
 - What changed: Implemented continuity control layer with persistent session state (`mode`, active NPC/encounter/thread), structured scene memory, player thread tracking, confidence-gated clarifications, anti-loop response nudges, and per-NPC dialogue summaries.
 - What failed: Narrative flow could reset between turns, and ambiguous follow-ups could derail into unrelated scene/combat states.
 - How fixed: Added continuity tables + store APIs, wired world engine turn resolution through `_respond(...)` observability/logging path, injected scene/session context into intent parsing, and added continuity regression tests (`tests/test_continuity.py`).
+
+## Cycle 8
+- What changed: Removed DEV-only runtime gate from Discord message handling, moved engine execution off the event loop via `asyncio.to_thread`, switched RNG to always use configured seed, hardened SQLite for threaded access (`check_same_thread=False` + lock), added one-time world seeding guard, expanded command handling for documented commands, improved location-based movement resolution, and made exploration prompts dynamic from current NPC/location data.
+- What failed: Command coverage and movement were previously too rigid (`town_square` fallback), and production deployment silently no-op'd when `DEV_MODE` was false.
+- How fixed: Added explicit command intents and handlers (`STATS/INVENTORY/SKILLS/RESPEC/FACTIONS/RECAP/DUEL`), implemented `_resolve_move_target(...)`, introduced seed version check via `WORLD_SEED_VERSION`, and integrated rules-based rolls into combat with XP/injury effects.
