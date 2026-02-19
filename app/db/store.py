@@ -70,9 +70,143 @@ class Store:
                 (key, json.dumps(value, sort_keys=True)),
             )
 
+    def upsert_npc(self, npc_id: str, name: str, location_id: str, is_key: bool = False, alive: bool = True) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO npcs(npc_id, name, location_id, is_key, alive)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (npc_id, name, location_id, 1 if is_key else 0, 1 if alive else 0),
+            )
+
+    def list_npcs_at_location(self, location_id: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE location_id = ? AND alive = 1 ORDER BY name",
+            (location_id,),
+        ).fetchall()
+
+    def upsert_npc_profile(self, npc_id: str, persona_prompt: str) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO npc_profiles(npc_id, persona_prompt) VALUES (?, ?)",
+                (npc_id, persona_prompt),
+            )
+
+    def get_npc_profile(self, npc_id: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT npc_id, persona_prompt FROM npc_profiles WHERE npc_id = ?",
+            (npc_id,),
+        ).fetchone()
+
+    def append_npc_dialogue(self, npc_id: str, player_id: str, role: str, content: str) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO npc_dialogue_memory(npc_id, player_id, role, content)
+                VALUES (?, ?, ?, ?)
+                """,
+                (npc_id, player_id, role, content),
+            )
+
+    def get_npc_dialogue_history(self, npc_id: str, player_id: str, limit: int = 10) -> list[dict[str, str]]:
+        rows = self.conn.execute(
+            """
+            SELECT role, content
+            FROM npc_dialogue_memory
+            WHERE npc_id = ? AND player_id = ?
+            ORDER BY memory_id DESC
+            LIMIT ?
+            """,
+            (npc_id, player_id, limit),
+        ).fetchall()
+        return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+
     def add_proposal(self, actor_id: str, proposal_type: str, content: str) -> None:
         with self.tx() as conn:
             conn.execute(
                 "INSERT INTO proposals(actor_id, proposal_type, content) VALUES (?, ?, ?)",
                 (actor_id, proposal_type, content),
             )
+
+    def get_recent_events(self, actor_id: str, limit: int = 6) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT event_type, payload_json, ts
+            FROM events
+            WHERE actor_id = ?
+            ORDER BY event_id DESC
+            LIMIT ?
+            """,
+            (actor_id, limit),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            try:
+                payload = json.loads(row["payload_json"])
+            except Exception:
+                payload = {}
+            items.append(
+                {
+                    "event_type": row["event_type"],
+                    "payload": payload,
+                    "ts": row["ts"],
+                }
+            )
+        return items
+
+    def try_consume_llm_call(
+        self,
+        day: str,
+        user_id: str,
+        max_calls_per_day: int,
+        max_calls_per_user_per_day: int,
+    ) -> tuple[bool, str | None]:
+        with self.tx() as conn:
+            global_calls = conn.execute(
+                "SELECT COALESCE(SUM(calls), 0) AS total FROM llm_usage WHERE day = ?",
+                (day,),
+            ).fetchone()["total"]
+            if global_calls >= max_calls_per_day:
+                return False, "global_limit"
+
+            row = conn.execute(
+                "SELECT calls FROM llm_usage WHERE day = ? AND user_id = ?",
+                (day, user_id),
+            ).fetchone()
+            user_calls = row["calls"] if row else 0
+            if user_calls >= max_calls_per_user_per_day:
+                return False, "user_limit"
+
+            conn.execute(
+                """
+                INSERT INTO llm_usage(day, user_id, calls)
+                VALUES (?, ?, 1)
+                ON CONFLICT(day, user_id) DO UPDATE SET calls = calls + 1
+                """,
+                (day, user_id),
+            )
+            return True, None
+
+    def get_latest_encounter(self, location_id: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            """
+            SELECT encounter_id, location_id, state_json
+            FROM encounters
+            WHERE location_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (location_id,),
+        ).fetchone()
+
+    def update_encounter_state(self, encounter_id: str, state: dict[str, Any]) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE encounters SET state_json = ? WHERE encounter_id = ?",
+                (json.dumps(state, sort_keys=True), encounter_id),
+            )
+
+    def delete_encounter(self, encounter_id: str) -> None:
+        with self.tx() as conn:
+            conn.execute("DELETE FROM encounters WHERE encounter_id = ?", (encounter_id,))

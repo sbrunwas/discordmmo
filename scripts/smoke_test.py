@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.config import Settings
 from app.db.store import Store
 from app.engine.combat_engine import trigger_combat
 from app.engine.world_engine import WorldEngine
@@ -13,11 +14,12 @@ from app.llm.client import LLMClient
 
 def run() -> None:
     store = Store(":memory:")
-    engine = WorldEngine(store, LLMClient(None), rng_seed=17)
+    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=17)
     engine.initialize_world()
 
     assert engine.handle_message("smoke", "Smoke", "!start").ok
     assert engine.handle_message("smoke", "Smoke", "look").ok
+    assert engine.handle_message("smoke", "Smoke", "talk to scholar ione").ok
     assert engine.handle_message("smoke", "Smoke", "move ruin").ok
     assert engine.handle_message("smoke", "Smoke", "investigate sigil").ok
     encounter_id = trigger_combat(store, "ruin_upper")

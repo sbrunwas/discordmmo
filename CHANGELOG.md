@@ -19,3 +19,13 @@
 - What changed: Expanded intent parsing to support natural language phrasing (look/move/investigate/rest) and command variants, plus added Discord channel restriction so the bot only responds in `#bot` while still enforcing DEV mode.
 - What failed: `python -m app` in sandbox failed DNS resolution to `discord.com`.
 - How fixed: Re-ran with escalated network permissions and confirmed successful gateway connection and login after the parser/channel updates.
+
+## Cycle 5
+- What changed: Migrated LLM backend to OpenRouter-compatible chat completions with env-based config (`LLM_BACKEND`, `OPENROUTER_*`), added strict input truncation and daily usage guardrails (global + per-user) backed by persisted SQLite `llm_usage`, and updated intent parsing to attempt LLM on `UNKNOWN` while preserving deterministic engine behavior with safe fallbacks.
+- What failed: Tests initially broke due `LLMClient` constructor/API changes and missing coverage for fallback/limits behavior.
+- How fixed: Updated wiring in `app/main.py`, parser callers, smoke/test setup, added `tests/test_llm_client.py` for stub/no-key/rate-limit scenarios, and documented secure env setup in `README.md`/`.env.example`.
+
+## Cycle 6
+- What changed: Added NPC conversation system with `TALK` intent, seeded NPC personalities, LLM-driven in-character dialogue generation, and persisted per-player NPC memory via new SQLite tables (`npc_profiles`, `npc_dialogue_memory`).
+- What failed: Social interaction text previously collapsed into generic investigation/look loops with no conversational continuity.
+- How fixed: Routed social language to `TALK`, added location NPC discovery + target resolution, injected persona/history context into `app/llm/npc_dialogue.py`, and added regression tests for memory persistence and talk flow.

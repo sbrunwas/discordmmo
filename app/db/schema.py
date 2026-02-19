@@ -59,9 +59,29 @@ CREATE TABLE IF NOT EXISTS proposals (
     status TEXT NOT NULL DEFAULT 'PENDING',
     ts DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS npc_profiles (
+    npc_id TEXT PRIMARY KEY,
+    persona_prompt TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS npc_dialogue_memory (
+    memory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    npc_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    ts DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS llm_usage (
+    day TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    calls INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(day, user_id)
+);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_actor_id ON events(actor_id);
 CREATE INDEX IF NOT EXISTS idx_encounters_location_id ON encounters(location_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_day ON llm_usage(day);
+CREATE INDEX IF NOT EXISTS idx_npc_memory_lookup ON npc_dialogue_memory(npc_id, player_id, memory_id);
 """
 
 

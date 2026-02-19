@@ -11,7 +11,7 @@ from app.llm.client import LLMClient
 
 def build_engine(settings: Settings) -> WorldEngine:
     store = Store(settings.db_path)
-    engine = WorldEngine(store, LLMClient(settings.openai_api_key), rng_seed=settings.rng_seed if settings.dev_mode else 42)
+    engine = WorldEngine(store, LLMClient(settings, store=store), rng_seed=settings.rng_seed if settings.dev_mode else 42)
     engine.initialize_world()
     return engine
 
@@ -19,7 +19,7 @@ def build_engine(settings: Settings) -> WorldEngine:
 def main() -> None:
     settings = Settings()
     configure_logging(settings.dev_mode)
-    logging.getLogger(__name__).info("app_start dev_mode=%s", settings.dev_mode)
+    logging.getLogger(__name__).info("app_start %s", settings.redacted())
     engine = build_engine(settings)
     run_discord_bot(engine, settings)
 
