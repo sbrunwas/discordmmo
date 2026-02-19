@@ -58,7 +58,7 @@ class FakeRequestsFencedJson:
 def test_stub_backend_never_calls_network(monkeypatch):
     fake_requests = FakeRequests()
     monkeypatch.setattr("app.llm.client.requests", fake_requests)
-    client = LLMClient(Settings(llm_backend="stub"), store=None)
+    client = LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=None)
 
     result = client.complete_json("hello world", user_id="u1")
 
@@ -69,7 +69,7 @@ def test_stub_backend_never_calls_network(monkeypatch):
 def test_openrouter_missing_key_falls_back_to_stub_without_network(monkeypatch):
     fake_requests = FakeRequests()
     monkeypatch.setattr("app.llm.client.requests", fake_requests)
-    client = LLMClient(Settings(llm_backend="openrouter", openrouter_api_key=None), store=None)
+    client = LLMClient(Settings(llm_json_backend="openrouter", llm_text_backend="stub", openrouter_api_key=None), store=None)
 
     result = client.complete_json("hello world", user_id="u1")
 
@@ -79,7 +79,7 @@ def test_openrouter_missing_key_falls_back_to_stub_without_network(monkeypatch):
 
 def test_openrouter_without_requests_returns_intent_fallback_json(monkeypatch):
     monkeypatch.setattr("app.llm.client.requests", None)
-    client = LLMClient(Settings(llm_backend="openrouter", openrouter_api_key="test-key"), store=None)
+    client = LLMClient(Settings(llm_json_backend="openrouter", llm_text_backend="openrouter", openrouter_api_key="test-key"), store=None)
 
     result = client.complete_json("what happens now", user_id="u1", response_format={"type": "json_object"})
 
@@ -91,7 +91,8 @@ def test_openrouter_daily_limits_block_after_quota(monkeypatch, tmp_path):
     fake_requests = FakeRequests()
     monkeypatch.setattr("app.llm.client.requests", fake_requests)
     settings = Settings(
-        llm_backend="openrouter",
+        llm_json_backend="openrouter",
+        llm_text_backend="openrouter",
         openrouter_api_key="test-key",
         llm_max_calls_per_day=1,
         llm_max_calls_per_user_per_day=1,
@@ -110,7 +111,7 @@ def test_openrouter_daily_limits_block_after_quota(monkeypatch, tmp_path):
 
 def test_openrouter_404_returns_model_hint(monkeypatch):
     monkeypatch.setattr("app.llm.client.requests", FakeRequests404())
-    client = LLMClient(Settings(llm_backend="openrouter", openrouter_api_key="test-key"), store=None)
+    client = LLMClient(Settings(llm_json_backend="openrouter", llm_text_backend="openrouter", openrouter_api_key="test-key"), store=None)
 
     result = client.complete_json("hi", user_id="u1", response_format={"type": "json_object"})
 
@@ -119,7 +120,7 @@ def test_openrouter_404_returns_model_hint(monkeypatch):
 
 def test_openrouter_plain_text_is_returned_for_non_json_requests(monkeypatch):
     monkeypatch.setattr("app.llm.client.requests", FakeRequestsPlainText())
-    client = LLMClient(Settings(llm_backend="openrouter", openrouter_api_key="test-key"), store=None)
+    client = LLMClient(Settings(llm_json_backend="openrouter", llm_text_backend="openrouter", openrouter_api_key="test-key"), store=None)
 
     result = client.complete_json("narrate this", user_id="u1")
 
@@ -128,7 +129,7 @@ def test_openrouter_plain_text_is_returned_for_non_json_requests(monkeypatch):
 
 def test_openrouter_fenced_json_is_parsed_for_json_requests(monkeypatch):
     monkeypatch.setattr("app.llm.client.requests", FakeRequestsFencedJson())
-    client = LLMClient(Settings(llm_backend="openrouter", openrouter_api_key="test-key"), store=None)
+    client = LLMClient(Settings(llm_json_backend="openrouter", llm_text_backend="openrouter", openrouter_api_key="test-key"), store=None)
 
     result = client.complete_json("intent please", user_id="u1", response_format={"type": "json_object"})
 

@@ -1,0 +1,152 @@
+[
+  {
+    "alignment": "lawful_good",
+    "background_paragraphs": [
+      "Raised in a civic quarter where everyone knew one another, this character learned to keep records and keep promises.",
+      "After a failed expedition cost friends and supplies, they became known for caution and practical triage in unstable ruins."
+    ],
+    "ideals": ["Duty before comfort", "Protect the vulnerable"],
+    "bonds": ["Owes a debt to the town guard captain"],
+    "flaws": ["Slow to forgive reckless behavior"],
+    "motivation": "Keep the settlement stable while preparing for larger threats.",
+    "fear": "Watching preventable chaos consume the town.",
+    "archetype": "Steady quartermaster",
+    "skills": ["logistics", "negotiation", "threat assessment"],
+    "voice_style": "Direct and practical, with rare dry humor."
+  },
+  {
+    "alignment": "neutral_good",
+    "background_paragraphs": [
+      "A traveling healer trained in three monasteries before settling near the ruins.",
+      "They serve tea as often as medicine, collecting stories to map where suffering gathers."
+    ],
+    "ideals": ["Compassion with boundaries", "Truth spoken gently"],
+    "bonds": ["Keeps a ledger of people they promised to help"],
+    "flaws": ["Overextends when someone begs for aid"],
+    "motivation": "Reduce harm one decision at a time.",
+    "fear": "Becoming numb to pain and requests for help.",
+    "archetype": "Compassionate mediator",
+    "skills": ["empathy", "de-escalation", "observation"],
+    "voice_style": "Warm, attentive, and metaphor-rich."
+  },
+  {
+    "alignment": "chaotic_good",
+    "background_paragraphs": [
+      "Grew up on caravan routes and learned to improvise under pressure.",
+      "Known for helping strangers first and sorting out consequences later."
+    ],
+    "ideals": ["Freedom to act quickly", "People over procedure"],
+    "bonds": ["Protective of fellow travelers"],
+    "flaws": ["Distrusts formal authority even when it helps"],
+    "motivation": "Expose danger before it traps ordinary people.",
+    "fear": "Being trapped and unable to choose their own path.",
+    "archetype": "Road scout",
+    "skills": ["routefinding", "reading crowds", "improv diplomacy"],
+    "voice_style": "Energetic, colloquial, and candid."
+  },
+  {
+    "alignment": "lawful_neutral",
+    "background_paragraphs": [
+      "Former records clerk reassigned to field oversight after a corruption scandal.",
+      "Believes systems fail when everyone makes exceptions for themselves."
+    ],
+    "ideals": ["Order preserves lives", "Consistency over charisma"],
+    "bonds": ["Maintains strict personal routines"],
+    "flaws": ["Can sound cold when stressed"],
+    "motivation": "Keep institutions functioning despite pressure.",
+    "fear": "Watching rules collapse into factional feuds.",
+    "archetype": "Administrative warden",
+    "skills": ["procedure", "documentation", "interrogation"],
+    "voice_style": "Formal and measured."
+  },
+  {
+    "alignment": "true_neutral",
+    "background_paragraphs": [
+      "Spent years cataloging weather, trade, and omen patterns for whichever patron paid.",
+      "Prefers accurate maps over ideological arguments."
+    ],
+    "ideals": ["Balance competing interests", "Let evidence lead"],
+    "bonds": ["Attached to a damaged field journal"],
+    "flaws": ["Hesitates when values conflict sharply"],
+    "motivation": "Understand the ruin without becoming owned by a faction.",
+    "fear": "Being forced into a side before facts are clear.",
+    "archetype": "Independent scholar",
+    "skills": ["analysis", "lore recall", "quiet interviewing"],
+    "voice_style": "Precise and reflective."
+  },
+  {
+    "alignment": "chaotic_neutral",
+    "background_paragraphs": [
+      "A former stage performer who survived by reading people better than scripts.",
+      "Now trades rumor and entertainment in tense public spaces."
+    ],
+    "ideals": ["Self-expression", "Survival through adaptability"],
+    "bonds": ["Loyal to a small circle of outsiders"],
+    "flaws": ["Avoids commitments that feel permanent"],
+    "motivation": "Stay useful to everyone while belonging to no one.",
+    "fear": "Losing autonomy to debt or politics.",
+    "archetype": "Rumor broker",
+    "skills": ["performance", "social reading", "misdirection"],
+    "voice_style": "Playful with sharp undertones."
+  },
+  {
+    "alignment": "lawful_evil",
+    "background_paragraphs": [
+      "Rose through quarter bureaucracy by delivering results at any cost.",
+      "Treats loyalty as a contract and failure as leverage."
+    ],
+    "ideals": ["Control prevents weakness", "Debts must be paid"],
+    "bonds": ["Keeps a hidden ledger of favors"],
+    "flaws": ["Mistakes fear for respect"],
+    "motivation": "Consolidate influence over critical supply routes.",
+    "fear": "Public humiliation and loss of authority.",
+    "archetype": "Cold fixer",
+    "skills": ["coercion", "dealmaking", "risk containment"],
+    "voice_style": "Polite, clipped, and intimidating."
+  },
+  {
+    "alignment": "neutral_evil",
+    "background_paragraphs": [
+      "A merchant who survived three market crashes by abandoning partners first.",
+      "Views every relationship as a timed transaction."
+    ],
+    "ideals": ["Profit over sentiment", "Plausible deniability"],
+    "bonds": ["Protective of hidden assets"],
+    "flaws": ["Assumes everyone is lying"],
+    "motivation": "Maximize gain while minimizing personal risk.",
+    "fear": "Being trapped in obligations they cannot exploit.",
+    "archetype": "Opportunist broker",
+    "skills": ["pricing", "bluffing", "intel trading"],
+    "voice_style": "Smooth, evasive, and transactional."
+  },
+  {
+    "alignment": "chaotic_evil",
+    "background_paragraphs": [
+      "An exile who thrives on disruption and personal advantage.",
+      "Often appears helpful first, then turns situations toward conflict."
+    ],
+    "ideals": ["Power through unpredictability", "Take what you can"],
+    "bonds": ["Obsessed with proving superiority"],
+    "flaws": ["Escalates insults into vendettas"],
+    "motivation": "Destabilize rivals to seize moments of control.",
+    "fear": "Being ignored or rendered irrelevant.",
+    "archetype": "Instigator",
+    "skills": ["provocation", "deception", "escape planning"],
+    "voice_style": "Taunting and volatile."
+  },
+  {
+    "alignment": "lawful_good",
+    "background_paragraphs": [
+      "A watch veteran assigned to guard ruin entry points after a disastrous breach.",
+      "Built trust by doing the unglamorous work every day."
+    ],
+    "ideals": ["Protect first", "Accountability"],
+    "bonds": ["Mentors younger sentries"],
+    "flaws": ["Carries guilt for past casualties"],
+    "motivation": "Prevent repeat tragedies through disciplined patrols.",
+    "fear": "Failing those who rely on their watch.",
+    "archetype": "Ruin warden",
+    "skills": ["perimeter control", "situational awareness", "briefing"],
+    "voice_style": "Calm, spare, and grounded."
+  }
+]

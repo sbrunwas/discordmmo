@@ -202,29 +202,114 @@ class Store:
                 (key, json.dumps(value, sort_keys=True)),
             )
 
-    def upsert_npc(self, npc_id: str, name: str, location_id: str, is_key: bool = False, alive: bool = True) -> None:
+    def upsert_npc(
+        self,
+        npc_id: str,
+        name: str,
+        location_id: str,
+        is_key: bool = False,
+        alive: bool = True,
+        persona_json: dict[str, Any] | None = None,
+        memory_json: dict[str, Any] | None = None,
+        npc_last_tick_ts: int = 0,
+    ) -> None:
+        persona_payload = json.dumps(persona_json or {}, sort_keys=True)
+        memory_payload = json.dumps(memory_json or {}, sort_keys=True)
         with self.tx() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO npcs(npc_id, name, location_id, is_key, alive)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO npcs(npc_id, name, location_id, is_key, alive, persona_json, memory_json, npc_last_tick_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (npc_id, name, location_id, 1 if is_key else 0, 1 if alive else 0),
+                (
+                    npc_id,
+                    name,
+                    location_id,
+                    1 if is_key else 0,
+                    1 if alive else 0,
+                    persona_payload,
+                    memory_payload,
+                    int(npc_last_tick_ts),
+                ),
             )
 
     def list_npcs_at_location(self, location_id: str) -> list[sqlite3.Row]:
         with self._lock:
             return self.conn.execute(
-                "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE location_id = ? AND alive = 1 ORDER BY name",
+                """
+                SELECT npc_id, name, location_id, is_key, alive, persona_json, memory_json, npc_last_tick_ts
+                FROM npcs
+                WHERE location_id = ? AND alive = 1
+                ORDER BY name
+                """,
                 (location_id,),
+            ).fetchall()
+
+    def list_npcs(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self.conn.execute(
+                """
+                SELECT npc_id, name, location_id, is_key, alive, persona_json, memory_json, npc_last_tick_ts
+                FROM npcs
+                WHERE alive = 1
+                ORDER BY npc_last_tick_ts ASC, name ASC
+                """
             ).fetchall()
 
     def get_npc(self, npc_id: str) -> sqlite3.Row | None:
         with self._lock:
             return self.conn.execute(
-                "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE npc_id = ?",
+                """
+                SELECT npc_id, name, location_id, is_key, alive, persona_json, memory_json, npc_last_tick_ts
+                FROM npcs
+                WHERE npc_id = ?
+                """,
                 (npc_id,),
             ).fetchone()
+
+    def move_npc(self, npc_id: str, location_id: str) -> None:
+        with self.tx() as conn:
+            conn.execute("UPDATE npcs SET location_id = ? WHERE npc_id = ?", (location_id, npc_id))
+
+    def update_npc_persona(self, npc_id: str, persona_json: dict[str, Any]) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE npcs SET persona_json = ? WHERE npc_id = ?",
+                (json.dumps(persona_json, sort_keys=True), npc_id),
+            )
+
+    def update_npc_memory(self, npc_id: str, memory_json: dict[str, Any]) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE npcs SET memory_json = ? WHERE npc_id = ?",
+                (json.dumps(memory_json, sort_keys=True), npc_id),
+            )
+
+    def update_npc_last_tick_ts(self, npc_id: str, ts: int) -> None:
+        with self.tx() as conn:
+            conn.execute("UPDATE npcs SET npc_last_tick_ts = ? WHERE npc_id = ?", (int(ts), npc_id))
+
+    def get_npc_persona_json(self, npc_id: str) -> dict[str, Any]:
+        row = self.get_npc(npc_id)
+        if row is None:
+            return {}
+        raw = row["persona_json"]
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else {}
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def get_npc_memory_json(self, npc_id: str) -> dict[str, Any]:
+        row = self.get_npc(npc_id)
+        if row is None:
+            return {}
+        raw = row["memory_json"]
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else {}
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     def upsert_npc_profile(self, npc_id: str, persona_prompt: str) -> None:
         with self.tx() as conn:

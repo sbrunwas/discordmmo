@@ -39,3 +39,13 @@
 - What changed: Removed DEV-only runtime gate from Discord message handling, moved engine execution off the event loop via `asyncio.to_thread`, switched RNG to always use configured seed, hardened SQLite for threaded access (`check_same_thread=False` + lock), added one-time world seeding guard, expanded command handling for documented commands, improved location-based movement resolution, and made exploration prompts dynamic from current NPC/location data.
 - What failed: Command coverage and movement were previously too rigid (`town_square` fallback), and production deployment silently no-op'd when `DEV_MODE` was false.
 - How fixed: Added explicit command intents and handlers (`STATS/INVENTORY/SKILLS/RESPEC/FACTIONS/RECAP/DUEL`), implemented `_resolve_move_target(...)`, introduced seed version check via `WORLD_SEED_VERSION`, and integrated rules-based rolls into combat with XP/injury effects.
+
+## Cycle 9
+- What changed: Implemented Hybrid LLM (OpenRouter JSON + Ollama text) + Ollama autostart, including split backend config (`LLM_JSON_BACKEND`, `LLM_TEXT_BACKEND`), provider-based LLM client routing, OpenRouter JSON validation with strict fallback, Ollama runtime healthcheck/autostart, and startup-time fallback to stub text generation when Ollama is unavailable.
+- What failed: Existing tests assumed a single `LLM_BACKEND` flow and would route text paths into unavailable local Ollama defaults.
+- How fixed: Updated tests/config docs for split backends, added hybrid routing/autostart fallback coverage, and preserved compatibility via safe stub fallbacks without crashing `python -m app`.
+
+## Cycle 10
+- What changed: Added in-repo `app/npcforge` package (schemas, generator, policy, memory, planner, compiler, templates) and integrated it into NPC TALK flow with persistent NPC sheet/state in `npcs.persona_json` + `npcs.memory_json`; added planner tick execution path with guardrails and `npc_tick` tagging, plus relationship/memory event logging (`NPC_SPOKE`, `NPC_STATE_UPDATED`, `FLAVOR_ONLY`, `NPC_TICK`).
+- What failed: Existing schema/store methods did not support structured NPC persona/state persistence, and there was no safe compiler path from open-ended NPC candidate actions to deterministic world changes.
+- How fixed: Extended DB schema with backward-compatible migrations (`persona_json`, `memory_json`, `npc_last_tick_ts`), added Store helpers for NPC forge state, implemented bounded memory/relationship updates and safe action compilation, and added tests + smoke coverage for relationship shifts and planner tick outcomes.

@@ -4,21 +4,27 @@ import json
 import logging
 import random
 import re
+import time
 
 from app.db.store import Store
 from app.engine.arc_engine import initialize_arc
 from app.engine.combat_engine import trigger_combat
 from app.engine.rules_engine import death_save_roll
-from app.llm.npc_dialogue import generate_npc_reply
 from app.llm.intent_parser import parse_intent
 from app.llm.narrator import narrate_outcome
 from app.models.core import ActionResult, EngineOutcome
+from app.npcforge.compiler import compile_candidate_actions
+from app.npcforge.generator import generate_npc_sheet, initial_state_for_sheet
+from app.npcforge.memory import apply_output_state_updates, decay_mood
+from app.npcforge.planner import plan_npc_tick
+from app.npcforge.policy import produce_npc_output
+from app.npcforge.schemas import NPCSheet, NPCState, Observation
 
 log = logging.getLogger(__name__)
 
 
 class WorldEngine:
-    WORLD_SEED_VERSION = 1
+    WORLD_SEED_VERSION = 2
 
     def __init__(self, store: Store, narrator_client, rng_seed: int = 1337) -> None:
         self.store = store
@@ -33,6 +39,7 @@ class WorldEngine:
         initialize_arc(self.store)
         self._seed_npcs()
         self.store.set_arc_value("WORLD_SEED_VERSION", {"version": self.WORLD_SEED_VERSION})
+        self.store.set_arc_value("NPCFORGE_LAST_GLOBAL_TICK_TS", {"ts": int(time.time())})
         self.store.write_event("system", "WORLD_INITIALIZED", {"locations": 2})
 
     def handle_message(self, actor_id: str, actor_name: str, text: str) -> ActionResult:
@@ -83,6 +90,7 @@ class WorldEngine:
                 thread_id=session.get("active_thread_id"),
                 ok=False,
             )
+        self._maybe_run_npc_planner_tick()
 
         encounter_row = self.store.get_latest_encounter(actor_id, player["location_id"])
         if encounter_row is not None:
@@ -259,13 +267,14 @@ class WorldEngine:
         if intent.action == "RECAP":
             recap_events = self.store.get_recent_events(actor_id, limit=5)
             recap = ", ".join(event["event_type"] for event in recap_events) if recap_events else "No major events yet."
+            relationship_events = sum(1 for event in recap_events if event["event_type"] == "NPC_STATE_UPDATED")
             return self._respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="explore",
                 action="RECAP",
-                message=f"Recent timeline: {recap}.",
+                message=f"Recent timeline: {recap}. Relationships changed: {relationship_events}.",
                 player=player,
                 thread_id="recap:recent",
             )
@@ -640,6 +649,23 @@ class WorldEngine:
             self.store.upsert_npc(npc_id, name, location_id, is_key=is_key)
         if self.store.get_npc_profile(npc_id) is None:
             self.store.upsert_npc_profile(npc_id, persona)
+        npc = self.store.get_npc(npc_id)
+        if npc is None:
+            return
+        persona_json = self.store.get_npc_persona_json(npc_id)
+        memory_json = self.store.get_npc_memory_json(npc_id)
+        if not persona_json:
+            tier = 3 if is_key else 1
+            sheet = generate_npc_sheet(npc_id, name, location_id, tier=tier, llm_client=self.narrator_client)
+            persona_json = sheet.model_dump()
+            self.store.update_npc_persona(npc_id, persona_json)
+        if not memory_json:
+            try:
+                sheet = NPCSheet(**persona_json)
+            except Exception:
+                sheet = generate_npc_sheet(npc_id, name, location_id, tier=3 if is_key else 1, llm_client=None)
+                self.store.update_npc_persona(npc_id, sheet.model_dump())
+            self.store.update_npc_memory(npc_id, initial_state_for_sheet(sheet).model_dump())
 
     def _handle_talk(self, actor_id: str, player_text: str, location_id: str, target: str | None) -> dict[str, object]:
         npcs = self.store.list_npcs_at_location(location_id)
@@ -679,31 +705,72 @@ class WorldEngine:
                 "thread_id": "thread:none",
             }
 
-        profile = self.store.get_npc_profile(npc["npc_id"])
-        persona = profile["persona_prompt"] if profile else f"{npc['name']} is a local resident."
         location = self.store.get_location(location_id)
-        history = self.store.get_npc_dialogue_history(npc["npc_id"], actor_id, limit=10)
-        summary = self.store.get_npc_dialogue_summary(npc["npc_id"], actor_id)
+        history = self.store.get_npc_dialogue_history(npc["npc_id"], actor_id, limit=8)
         thread_id = f"npc:{npc['npc_id']}"
-        reply = generate_npc_reply(
-            self.narrator_client,
-            user_id=actor_id,
-            npc_name=npc["name"],
-            npc_persona=persona,
+        sheet, state = self._npc_sheet_state(npc)
+        obs = Observation(
+            now_ts=int(time.time()),
+            player_id=actor_id,
+            player_utterance=player_text,
+            location_id=location_id,
             location_name=location["name"] if location else "Unknown",
-            location_description=location["description"] if location else "",
-            player_message=player_text,
-            history=history,
-            summary=summary,
-            active_thread=thread_id,
+            world_summary=f"Recent events: {', '.join(event['event_type'] for event in self.store.get_recent_events(actor_id, limit=4))}",
+            recent_events=[event["event_type"] for event in self.store.get_recent_events(actor_id, limit=6)],
+            visible_context={
+                "npc_name": npc["name"],
+                "location_description": location["description"] if location else "",
+                "history_tail": history[-4:],
+            },
         )
+        output = produce_npc_output(sheet, state, obs, llm_client=self.narrator_client)
+        updated_state = apply_output_state_updates(decay_mood(state, steps=1), output)
+        self.store.update_npc_memory(npc["npc_id"], updated_state.model_dump())
+        reply = output.dialogue or f"{npc['name']} studies you carefully but offers no clear reply."
         self.store.append_npc_dialogue(npc["npc_id"], actor_id, "player", player_text)
         self.store.append_npc_dialogue(npc["npc_id"], actor_id, "npc", reply)
-        updated_summary = self._build_npc_summary(summary, history, player_text, reply, actor_id, npc["name"])
-        self.store.upsert_npc_dialogue_summary(npc["npc_id"], actor_id, updated_summary)
+        self.store.upsert_npc_dialogue_summary(npc["npc_id"], actor_id, updated_state.memory_summary)
         if len(history) >= 8:
             self.store.trim_npc_dialogue_history(npc["npc_id"], actor_id, keep_last=4)
-        self.store.write_event(actor_id, "NPC_DIALOGUE", {"npc_id": npc["npc_id"], "location_id": location_id})
+        self.store.write_event(
+            actor_id,
+            "NPC_SPOKE",
+            {
+                "npc_id": npc["npc_id"],
+                "location_id": location_id,
+                "dialogue": reply[:300],
+                "tags": ["npc_greeting", "npc_memory"],
+            },
+        )
+        if output.memory_update is not None:
+            self.store.write_event(
+                actor_id,
+                "NPC_STATE_UPDATED",
+                {
+                    "npc_id": npc["npc_id"],
+                    "location_id": location_id,
+                    "delta_affinity": output.memory_update.delta_affinity,
+                    "delta_trust": output.memory_update.delta_trust,
+                    "delta_respect": output.memory_update.delta_respect,
+                    "tags": ["npc_memory", "npc_relationship"],
+                },
+            )
+        compiled = compile_candidate_actions(
+            output.candidate_actions,
+            sheet=sheet,
+            current_location_id=location_id,
+            allowed_locations={row["location_id"] for row in self.store.list_locations()},
+            key_npc=bool(npc["is_key"]),
+        )
+        self._apply_compiled_npc_actions(
+            actor_id=actor_id,
+            npc=npc,
+            sheet=sheet,
+            state=updated_state,
+            compiled_actions=compiled,
+            source="talk",
+            now_ts=obs.now_ts,
+        )
         self.store.upsert_thread(
             actor_id,
             thread_id,
@@ -757,7 +824,7 @@ class WorldEngine:
     def _active_dialogue_npc_target(self, actor_id: str, location_id: str) -> str | None:
         recent = self.store.get_recent_events(actor_id, limit=4)
         for event in reversed(recent):
-            if event["event_type"] != "NPC_DIALOGUE":
+            if event["event_type"] not in {"NPC_DIALOGUE", "NPC_SPOKE"}:
                 continue
             payload = event.get("payload", {})
             if payload.get("location_id") != location_id:
@@ -770,6 +837,168 @@ class WorldEngine:
                 continue
             return str(npc["name"])
         return None
+
+    def _npc_sheet_state(self, npc) -> tuple[NPCSheet, NPCState]:
+        npc_id = str(npc["npc_id"])
+        name = str(npc["name"])
+        location_id = str(npc["location_id"])
+        is_key = bool(npc["is_key"])
+        persona_json = self.store.get_npc_persona_json(npc_id)
+        memory_json = self.store.get_npc_memory_json(npc_id)
+        if not persona_json:
+            sheet = generate_npc_sheet(npc_id, name, location_id, tier=3 if is_key else 1, llm_client=self.narrator_client)
+            self.store.update_npc_persona(npc_id, sheet.model_dump())
+        else:
+            try:
+                sheet = NPCSheet(**persona_json)
+            except Exception:
+                sheet = generate_npc_sheet(npc_id, name, location_id, tier=3 if is_key else 1, llm_client=None)
+                self.store.update_npc_persona(npc_id, sheet.model_dump())
+        if not memory_json:
+            state = initial_state_for_sheet(sheet)
+            self.store.update_npc_memory(npc_id, state.model_dump())
+        else:
+            try:
+                state = NPCState(**memory_json)
+            except Exception:
+                state = initial_state_for_sheet(sheet)
+                self.store.update_npc_memory(npc_id, state.model_dump())
+        return sheet, state
+
+    def _consume_npc_move_budget(self, now_ts: int, max_moves_per_hour: int = 6) -> bool:
+        hour_bucket = time.strftime("%Y%m%d%H", time.gmtime(now_ts))
+        key = f"NPCFORGE_MOVE_BUDGET_{hour_bucket}"
+        current = self.store.get_arc_value(key) or {"count": 0}
+        count = int(current.get("count", 0))
+        if count >= max_moves_per_hour:
+            return False
+        self.store.set_arc_value(key, {"count": count + 1})
+        return True
+
+    def _apply_compiled_npc_actions(
+        self,
+        *,
+        actor_id: str,
+        npc,
+        sheet: NPCSheet,
+        state: NPCState,
+        compiled_actions,
+        source: str,
+        now_ts: int,
+    ) -> None:
+        npc_id = str(npc["npc_id"])
+        for compiled in compiled_actions:
+            if compiled.mode == "executable" and compiled.action_type == "MOVE_NPC":
+                if not self._consume_npc_move_budget(now_ts):
+                    self.store.write_event(
+                        actor_id,
+                        "FLAVOR_ONLY",
+                        {
+                            "npc_id": npc_id,
+                            "reason": "npc_move_hourly_limit",
+                            "tags": ["npc_tick"] if source == "tick" else [],
+                        },
+                    )
+                    continue
+                target = str(compiled.payload["target_location_id"])
+                self.store.move_npc(npc_id, target)
+                self.store.write_event(
+                    actor_id,
+                    "NPC_MOVED",
+                    {
+                        "npc_id": npc_id,
+                        "from": str(npc["location_id"]),
+                        "to": target,
+                        "reason": compiled.payload.get("reason", "npc_move"),
+                        "tags": ["npc_tick"] if source == "tick" else [],
+                    },
+                )
+            elif compiled.mode == "executable" and compiled.action_type == "CHANGE_AVAILABILITY":
+                availability = str(compiled.payload.get("availability", "busy"))
+                duration_minutes = int(compiled.payload.get("duration_minutes", 15))
+                updated_state = state.model_copy(deep=True)
+                updated_state.availability = availability if availability in {"open", "busy", "away"} else "busy"
+                updated_state.unavailable_until_ts = now_ts + (duration_minutes * 60)
+                self.store.update_npc_memory(npc_id, updated_state.model_dump())
+                self.store.write_event(
+                    actor_id,
+                    "NPC_STATE_UPDATED",
+                    {
+                        "npc_id": npc_id,
+                        "availability": updated_state.availability,
+                        "unavailable_until_ts": updated_state.unavailable_until_ts,
+                        "tags": ["npc_tick"] if source == "tick" else ["npc_relationship"],
+                    },
+                )
+            else:
+                self.store.write_event(
+                    actor_id,
+                    "FLAVOR_ONLY",
+                    {
+                        "npc_id": npc_id,
+                        "compiled_action": compiled.action_type,
+                        "payload": compiled.payload,
+                        "tags": ["npc_tick"] if source == "tick" else [],
+                    },
+                )
+
+    def run_npc_planner_tick(self, now_ts: int | None = None, max_npcs: int = 2) -> int:
+        ts = int(now_ts or time.time())
+        all_npcs = self.store.list_npcs()
+        acted = 0
+        for npc in all_npcs[: max(1, max_npcs)]:
+            npc_last_tick = int(npc["npc_last_tick_ts"] or 0)
+            if npc_last_tick and ts - npc_last_tick < 300:
+                continue
+            sheet, state = self._npc_sheet_state(npc)
+            location = self.store.get_location(npc["location_id"])
+            observation = Observation(
+                now_ts=ts,
+                player_id=None,
+                player_utterance=None,
+                location_id=str(npc["location_id"]),
+                location_name=location["name"] if location is not None else str(npc["location_id"]),
+                world_summary="Autonomous NPC planner tick. Arc progression is disallowed.",
+                recent_events=[event["event_type"] for event in self.store.get_recent_events("system", limit=4)],
+                visible_context={"source": "npc_tick"},
+            )
+            decayed_state = decay_mood(state, steps=1)
+            output = plan_npc_tick(sheet, decayed_state, observation, rng=self.rng)
+            updated_state = apply_output_state_updates(decayed_state, output)
+            self.store.update_npc_memory(str(npc["npc_id"]), updated_state.model_dump())
+            compiled = compile_candidate_actions(
+                output.candidate_actions,
+                sheet=sheet,
+                current_location_id=str(npc["location_id"]),
+                allowed_locations={row["location_id"] for row in self.store.list_locations()},
+                key_npc=bool(npc["is_key"]),
+            )
+            self._apply_compiled_npc_actions(
+                actor_id="system",
+                npc=npc,
+                sheet=sheet,
+                state=updated_state,
+                compiled_actions=compiled,
+                source="tick",
+                now_ts=ts,
+            )
+            self.store.update_npc_last_tick_ts(str(npc["npc_id"]), ts)
+            self.store.write_event(
+                "system",
+                "NPC_TICK",
+                {"npc_id": str(npc["npc_id"]), "intent": output.intent, "tags": ["npc_tick"]},
+            )
+            acted += 1
+        self.store.set_arc_value("NPCFORGE_LAST_GLOBAL_TICK_TS", {"ts": ts})
+        return acted
+
+    def _maybe_run_npc_planner_tick(self) -> None:
+        now_ts = int(time.time())
+        marker = self.store.get_arc_value("NPCFORGE_LAST_GLOBAL_TICK_TS") or {"ts": now_ts}
+        last_ts = int(marker.get("ts", now_ts))
+        if now_ts - last_ts < 300:
+            return
+        self.run_npc_planner_tick(now_ts=now_ts, max_npcs=1)
 
     def _should_continue_dialogue(self, text: str, action: str) -> bool:
         if action not in {"UNKNOWN", "LOOK"}:

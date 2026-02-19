@@ -7,7 +7,7 @@ from app.llm.client import LLMClient
 
 def test_start_and_move_persists(tmp_path):
     store = Store(str(tmp_path / "test.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
 
     start = engine.handle_message("p1", "Hero", "!start")
@@ -25,7 +25,7 @@ def test_start_and_move_persists(tmp_path):
 
 def test_move_resolution_uses_location_alias(tmp_path):
     store = Store(str(tmp_path / "move_alias.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
     move = engine.handle_message("p1", "Hero", "move to ruin")
@@ -37,7 +37,7 @@ def test_move_resolution_uses_location_alias(tmp_path):
 
 def test_first_visit_triggers_scene_description(tmp_path):
     store = Store(str(tmp_path / "visit_flag.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
     assert not store.has_visited_location("p1", "ruin_upper")
@@ -50,7 +50,7 @@ def test_first_visit_triggers_scene_description(tmp_path):
 
 def test_active_combat_state_is_handled(tmp_path):
     store = Store(str(tmp_path / "combat.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
     encounter_id = trigger_combat(store, "p1", "town_square")
@@ -66,7 +66,7 @@ def test_active_combat_state_is_handled(tmp_path):
 
 def test_investigate_can_resolve_active_combat(tmp_path):
     store = Store(str(tmp_path / "combat_resolve.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
     encounter_id = trigger_combat(store, "p1", "town_square")
@@ -83,7 +83,7 @@ def test_investigate_can_resolve_active_combat(tmp_path):
 
 def test_other_players_combat_does_not_block_turn(tmp_path):
     store = Store(str(tmp_path / "combat_scope.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
     assert engine.handle_message("p2", "Rival", "!start").ok
@@ -97,7 +97,7 @@ def test_other_players_combat_does_not_block_turn(tmp_path):
 
 def test_talk_to_npc_persists_dialogue_memory(tmp_path):
     store = Store(str(tmp_path / "npc_talk.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
 
@@ -113,7 +113,7 @@ def test_talk_to_npc_persists_dialogue_memory(tmp_path):
 
 def test_documented_commands_return_specific_feedback(tmp_path):
     store = Store(str(tmp_path / "commands.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
 
@@ -128,7 +128,7 @@ def test_documented_commands_return_specific_feedback(tmp_path):
 
 def test_unknown_follow_up_continues_last_npc_dialogue(tmp_path):
     store = Store(str(tmp_path / "npc_followup.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
     assert engine.handle_message("p1", "Hero", "talk to scholar ione").ok

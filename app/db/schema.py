@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS npcs (
     name TEXT NOT NULL,
     location_id TEXT NOT NULL,
     is_key INTEGER NOT NULL DEFAULT 0,
-    alive INTEGER NOT NULL DEFAULT 1
+    alive INTEGER NOT NULL DEFAULT 1,
+    persona_json TEXT NOT NULL DEFAULT '{}',
+    memory_json TEXT NOT NULL DEFAULT '{}',
+    npc_last_tick_ts INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS factions (
     faction_id TEXT PRIMARY KEY,
@@ -124,4 +127,11 @@ def init_db(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(encounters)").fetchall()}
     if "actor_id" not in columns:
         conn.execute("ALTER TABLE encounters ADD COLUMN actor_id TEXT DEFAULT 'global'")
+    npc_columns = {row[1] for row in conn.execute("PRAGMA table_info(npcs)").fetchall()}
+    if "persona_json" not in npc_columns:
+        conn.execute("ALTER TABLE npcs ADD COLUMN persona_json TEXT NOT NULL DEFAULT '{}'")
+    if "memory_json" not in npc_columns:
+        conn.execute("ALTER TABLE npcs ADD COLUMN memory_json TEXT NOT NULL DEFAULT '{}'")
+    if "npc_last_tick_ts" not in npc_columns:
+        conn.execute("ALTER TABLE npcs ADD COLUMN npc_last_tick_ts INTEGER NOT NULL DEFAULT 0")
     conn.commit()

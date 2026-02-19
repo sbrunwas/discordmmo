@@ -10,7 +10,7 @@ from app.llm.client import LLMClient
 
 def _engine(tmp_path):
     store = Store(str(tmp_path / "continuity.db"))
-    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine = WorldEngine(store, LLMClient(Settings(llm_json_backend="stub", llm_text_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     return store, engine
 
@@ -59,7 +59,7 @@ def test_npc_summary_is_updated(tmp_path):
     summary = store.get_npc_dialogue_summary("scholar_ione", "p1")
 
     assert summary
-    assert "Player asked:" in summary
+    assert "Spoke with p1" in summary
 
 
 def test_observability_log_includes_mode_and_thread(tmp_path, caplog):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 
 from app.config import Settings, configure_logging
@@ -7,6 +8,7 @@ from app.db.store import Store
 from app.discord_bot import run_discord_bot
 from app.engine.world_engine import WorldEngine
 from app.llm.client import LLMClient
+from app.llm.ollama_runtime import ensure_ollama_running
 
 
 def build_engine(settings: Settings) -> WorldEngine:
@@ -20,6 +22,10 @@ def main() -> None:
     settings = Settings()
     configure_logging(settings.dev_mode)
     logging.getLogger(__name__).info("app_start %s", settings.redacted())
+    if settings.llm_text_backend == "ollama" and settings.ollama_autostart:
+        if not ensure_ollama_running(settings):
+            logging.getLogger(__name__).warning("ollama_unavailable_using_stub_narration")
+            settings = replace(settings, llm_text_backend="stub")
     engine = build_engine(settings)
     run_discord_bot(engine, settings)
 
