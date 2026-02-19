@@ -23,26 +23,26 @@ COMMAND_MAP = {
     "!rest long": "REST_LONG",
 }
 
-LOOK_WORDS = ("look", "observe", "scan")
-INVESTIGATE_WORDS = ("investigate", "inspect", "examine", "search")
-MOVE_WORDS = ("move", "go", "walk", "travel", "head")
-SOCIAL_WORDS = ("talk", "speak", "ask", "approach", "greet", "chat")
-
-
 def parse_intent(
     text: str,
     llm_client: LLMClient | None = None,
     user_id: str = "system",
     context: dict[str, Any] | None = None,
 ) -> Intent:
-    parsed = _parse_intent_rules(text)
-    if parsed.action != "UNKNOWN":
+    parsed = _parse_intent_explicit(text)
+    if parsed is not None:
         return parsed
     if llm_client is not None:
         llm_intent = _parse_intent_with_llm(llm_client, text, user_id=user_id, context=context)
         if llm_intent is not None:
             return llm_intent
-    return parsed
+    return Intent(
+        action="UNKNOWN",
+        target=None,
+        confidence=0.1,
+        clarify_question="I could not parse that. Try `!help` for commands.",
+        raw_text=text,
+    )
 
 
 def _parse_intent_with_llm(
@@ -107,62 +107,51 @@ def _parse_intent_with_llm(
         )
 
 
-def _parse_intent_rules(text: str) -> Intent:
+def _parse_intent_explicit(text: str) -> Intent | None:
     lower = text.strip().lower()
-    action = "UNKNOWN"
-    target = None
+    if not lower:
+        return Intent(action="UNKNOWN", target=None, raw_text=text)
 
     for command, mapped_action in COMMAND_MAP.items():
         if lower == command or lower.startswith(f"{command} "):
-            action = mapped_action
+            target = None
             parts = lower.split(maxsplit=1)
-            target = parts[1] if len(parts) > 1 else None
-            break
+            if len(parts) > 1:
+                target = parts[1]
+            intent = Intent(action=mapped_action, target=target, raw_text=text)
+            log.info("parsed_intent_explicit %s", intent.model_dump_json())
+            return intent
 
-    if action == "UNKNOWN":
-        if re.search(r"\brest\b", lower):
-            if re.search(r"\blong\b", lower):
-                action = "REST_LONG"
-            elif re.search(r"\bshort\b", lower):
-                action = "REST_SHORT"
+    # Imperative command style without "!"
+    match = re.match(r"^(help|start|look|investigate|move|go|talk|rest)\b(?:\s+(.*))?$", lower)
+    if not match:
+        return None
 
-    if action == "UNKNOWN":
-        if any(re.search(rf"\b{word}\b", lower) for word in INVESTIGATE_WORDS):
-            action = "INVESTIGATE"
-        elif any(re.search(rf"\b{word}\b", lower) for word in SOCIAL_WORDS):
-            action = "TALK"
-        elif any(re.search(rf"\b{word}\b", lower) for word in LOOK_WORDS):
-            action = "LOOK"
-        elif any(re.search(rf"\b{word}\b", lower) for word in MOVE_WORDS):
-            action = "MOVE"
+    verb = match.group(1)
+    remainder = (match.group(2) or "").strip()
+    if verb == "help":
+        action = "HELP"
+    elif verb == "start":
+        action = "START"
+    elif verb == "look":
+        action = "LOOK"
+    elif verb == "investigate":
+        action = "INVESTIGATE"
+    elif verb in {"move", "go"}:
+        action = "MOVE"
+    elif verb == "talk":
+        action = "TALK"
+    elif verb == "rest":
+        if remainder.startswith("long"):
+            action = "REST_LONG"
+        elif remainder.startswith("short"):
+            action = "REST_SHORT"
+        else:
+            return None
+    else:
+        return None
 
-    if action == "TALK":
-        if " to " in lower:
-            target = lower.split(" to ", 1)[1].strip()
-        elif " with " in lower:
-            target = lower.split(" with ", 1)[1].strip()
-        if target:
-            target = target[:64]
-        if "traveler" in lower or "travellers" in lower:
-            target = "travelers"
-        elif "scholar" in lower or "scholars" in lower:
-            target = "scholar"
-        elif "merchant" in lower:
-            target = "merchant"
-    elif action == "INVESTIGATE":
-        if "traveler" in lower or "travellers" in lower:
-            target = "travelers"
-        elif "fire pit" in lower:
-            target = "fire_pit"
-        elif "merchant" in lower:
-            target = "merchant"
-
-    if action == "MOVE":
-        if "ruin" in lower:
-            target = "ruin"
-        elif "town" in lower or "square" in lower:
-            target = "town"
-
+    target = remainder if remainder else None
     intent = Intent(action=action, target=target, raw_text=text)
-    log.info("parsed_intent %s", intent.model_dump_json())
+    log.info("parsed_intent_explicit %s", intent.model_dump_json())
     return intent

@@ -22,7 +22,7 @@ def run() -> None:
     assert engine.handle_message("smoke", "Smoke", "talk to scholar ione").ok
     assert engine.handle_message("smoke", "Smoke", "move ruin").ok
     assert engine.handle_message("smoke", "Smoke", "investigate sigil").ok
-    encounter_id = trigger_combat(store, "ruin_upper")
+    encounter_id = trigger_combat(store, "smoke", "ruin_upper")
     assert encounter_id
     print("smoke_test_passed")
 

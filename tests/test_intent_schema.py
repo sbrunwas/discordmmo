@@ -28,12 +28,12 @@ def test_intent_schema_invalid_action():
 
 
 def test_parse_intent_natural_language():
-    assert parse_intent("I look around the square").action == "LOOK"
-    assert parse_intent("can I investigate this wall?").action == "INVESTIGATE"
-    talk_intent = parse_intent("I want to speak with the travelers around the fire pit")
+    assert parse_intent("look around the square").action == "LOOK"
+    assert parse_intent("investigate wall").action == "INVESTIGATE"
+    talk_intent = parse_intent("talk scholar ione")
     assert talk_intent.action == "TALK"
-    assert talk_intent.target in {"travelers", "scholar", "merchant"}
-    move_intent = parse_intent("we should head to the ruin")
+    assert talk_intent.target == "scholar ione"
+    move_intent = parse_intent("move ruin")
     assert move_intent.action == "MOVE"
     assert move_intent.target == "ruin"
 
@@ -58,6 +58,12 @@ def test_parse_intent_falls_back_when_llm_output_is_invalid():
     )
     assert intent.action == "UNKNOWN"
     assert intent.target is None
+    assert intent.clarify_question is not None
+
+
+def test_parse_intent_without_llm_returns_unknown_for_ambiguous_text():
+    intent = parse_intent("I would like to speak with the scholar")
+    assert intent.action == "UNKNOWN"
 
 
 def test_parse_intent_includes_context_in_llm_payload():

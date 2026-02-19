@@ -28,7 +28,7 @@ def test_active_combat_state_is_handled(tmp_path):
     engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
-    encounter_id = trigger_combat(store, "town_square")
+    encounter_id = trigger_combat(store, "p1", "town_square")
 
     response = engine.handle_message("p1", "Hero", "What is the danger?")
 
@@ -42,7 +42,7 @@ def test_investigate_can_resolve_active_combat(tmp_path):
     engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
     engine.initialize_world()
     assert engine.handle_message("p1", "Hero", "!start").ok
-    encounter_id = trigger_combat(store, "town_square")
+    encounter_id = trigger_combat(store, "p1", "town_square")
 
     response = engine.handle_message("p1", "Hero", "investigate enemy")
 
@@ -50,6 +50,20 @@ def test_investigate_can_resolve_active_combat(tmp_path):
     assert "end the fight" in response.message
     gone = store.conn.execute("SELECT encounter_id FROM encounters WHERE encounter_id = ?", (encounter_id,)).fetchone()
     assert gone is None
+
+
+def test_other_players_combat_does_not_block_turn(tmp_path):
+    store = Store(str(tmp_path / "combat_scope.db"))
+    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+    assert engine.handle_message("p2", "Rival", "!start").ok
+    trigger_combat(store, "p2", "town_square")
+
+    response = engine.handle_message("p1", "Hero", "look")
+
+    assert response.ok
+    assert "Combat is active" not in response.message
 
 
 def test_talk_to_npc_persists_dialogue_memory(tmp_path):
@@ -66,3 +80,40 @@ def test_talk_to_npc_persists_dialogue_memory(tmp_path):
         "SELECT COUNT(*) AS c FROM npc_dialogue_memory WHERE npc_id = 'scholar_ione' AND player_id = 'p1'"
     ).fetchone()["c"]
     assert memory_rows >= 2
+
+
+def test_unknown_follow_up_continues_last_npc_dialogue(tmp_path):
+    store = Store(str(tmp_path / "npc_followup.db"))
+    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+    assert engine.handle_message("p1", "Hero", "talk to scholar ione").ok
+
+    follow_up = engine.handle_message("p1", "Hero", "What do you think causes that?")
+
+    assert follow_up.ok
+    assert "Scholar Ione:" in follow_up.message
+
+
+class FakeStoryClient:
+    def complete_json(self, prompt: str, user_id: str = "system", **kwargs) -> dict:
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            if "Yes tell me more" in prompt:
+                return {"action": "LOOK", "target": None, "confidence": 0.9, "clarify_question": None}
+            return {"action": "TALK", "target": "traveler", "confidence": 0.9, "clarify_question": None}
+        return {"text": "The road north is cursed after dusk, so caravans stay near the square fires."}
+
+
+def test_dialogue_continues_when_intent_llm_returns_look(tmp_path):
+    store = Store(str(tmp_path / "npc_look_followup.db"))
+    engine = WorldEngine(store, FakeStoryClient(), rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+
+    first = engine.handle_message("p1", "Hero", "talk traveler sera")
+    second = engine.handle_message("p1", "Hero", "Yes tell me more")
+
+    assert first.ok
+    assert second.ok
+    assert "Traveler Sera:" in second.message

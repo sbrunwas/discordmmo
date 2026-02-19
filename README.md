@@ -2,7 +2,7 @@
 
 Persistent, deterministic Discord-based MMO campaign engine with an engine-first architecture.
 
-## Setup
+## Run locally (quick start)
 
 ```bash
 python -m venv .venv
@@ -11,13 +11,38 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Never commit real API keys. This is a public repo. Keep secrets only in local environment variables or a local `.env` file.
+1. Edit `.env` and set your keys:
 
-## Run Discord bot
+```env
+# Required to run the Discord bot
+DISCORD_TOKEN=your_discord_bot_token_here
+
+# Use OpenRouter for LLM responses
+LLM_BACKEND=openrouter
+OPENROUTER_API_KEY=your_openrouter_key_here
+OPENROUTER_MODEL=arcee-ai/trinity-large-preview:free
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+# Optional local defaults
+DEV_MODE=1
+DB_PATH=world_dev.db
+```
+
+2. In the Discord Developer Portal, ensure your bot has:
+- `MESSAGE CONTENT INTENT` enabled (required)
+- proper permissions/invite to your server and channel
+
+3. Start the bot:
 
 ```bash
 python -m app
 ```
+
+4. Chat with bot in Discord in # bot channel.
+
+Never commit real API keys. This is a public repo. Keep secrets only in local environment variables or a local `.env` file.
+
+If OpenRouter fails or keys are missing, the app falls back to stub mode automatically.
 
 ## Tests
 
@@ -68,6 +93,14 @@ NPC dialogue:
 
 - NPCs have seeded personalities and location-specific behavior prompts.
 - Dialogue uses per-player conversation memory so follow-up messages stay contextual.
+
+Continuity features:
+
+- Structured per-player scene memory (`mode`, `location`, `last_action`, `active_thread_id`).
+- Thread tracking for travel, combat, mystery beats, and NPC conversations.
+- Confidence gate for low-confidence `UNKNOWN` intents with clarifying responses.
+- Anti-loop guard that adds progression nudges on repeated bot output.
+- Per-NPC/player dialogue summaries to keep long conversations coherent.
 
 Git hygiene:
 

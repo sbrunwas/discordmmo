@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.llm.client import LLMClient
@@ -16,6 +17,8 @@ def generate_npc_reply(
     location_description: str,
     player_message: str,
     history: list[dict[str, str]],
+    summary: str,
+    active_thread: str,
 ) -> str:
     system_prompt = (
         "You are roleplaying an NPC in a Discord MMO. "
@@ -28,6 +31,8 @@ def generate_npc_reply(
         "npc_persona": npc_persona,
         "location_name": location_name,
         "location_description": location_description,
+        "conversation_summary": summary,
+        "active_thread": active_thread,
         "conversation_history": history[-10:],
         "player_message": player_message,
     }
@@ -37,7 +42,36 @@ def generate_npc_reply(
         system_prompt=system_prompt,
         temperature=0.7,
     )
-    text = str(data.get("text", "")).strip()
+    text = _extract_dialogue_text(str(data.get("text", "")).strip())
     if text:
         return text
     return f"{npc_name} studies you carefully but offers no clear reply."
+
+
+def _extract_dialogue_text(raw: str) -> str:
+    if not raw:
+        return ""
+    text = raw.strip()
+    parsed = _try_parse_jsonish(text)
+    if isinstance(parsed, dict):
+        for key in ("message", "reply", "dialogue", "text"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return text
+
+
+def _try_parse_jsonish(text: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None

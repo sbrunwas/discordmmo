@@ -29,3 +29,8 @@
 - What changed: Added NPC conversation system with `TALK` intent, seeded NPC personalities, LLM-driven in-character dialogue generation, and persisted per-player NPC memory via new SQLite tables (`npc_profiles`, `npc_dialogue_memory`).
 - What failed: Social interaction text previously collapsed into generic investigation/look loops with no conversational continuity.
 - How fixed: Routed social language to `TALK`, added location NPC discovery + target resolution, injected persona/history context into `app/llm/npc_dialogue.py`, and added regression tests for memory persistence and talk flow.
+
+## Cycle 7
+- What changed: Implemented continuity control layer with persistent session state (`mode`, active NPC/encounter/thread), structured scene memory, player thread tracking, confidence-gated clarifications, anti-loop response nudges, and per-NPC dialogue summaries.
+- What failed: Narrative flow could reset between turns, and ambiguous follow-ups could derail into unrelated scene/combat states.
+- How fixed: Added continuity tables + store APIs, wired world engine turn resolution through `_respond(...)` observability/logging path, injected scene/session context into intent parsing, and added continuity regression tests (`tests/test_continuity.py`).

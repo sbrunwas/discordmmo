@@ -49,6 +49,97 @@ class Store:
     def get_player(self, player_id: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM players WHERE player_id = ?", (player_id,)).fetchone()
 
+    def get_session_state(self, player_id: str) -> dict[str, Any]:
+        row = self.conn.execute(
+            """
+            SELECT mode, active_npc_id, active_encounter_id, active_thread_id, last_bot_message, repeat_count
+            FROM player_session_state
+            WHERE player_id = ?
+            """,
+            (player_id,),
+        ).fetchone()
+        if row is None:
+            return {
+                "mode": "explore",
+                "active_npc_id": None,
+                "active_encounter_id": None,
+                "active_thread_id": None,
+                "last_bot_message": "",
+                "repeat_count": 0,
+            }
+        return {
+            "mode": row["mode"],
+            "active_npc_id": row["active_npc_id"],
+            "active_encounter_id": row["active_encounter_id"],
+            "active_thread_id": row["active_thread_id"],
+            "last_bot_message": row["last_bot_message"] or "",
+            "repeat_count": int(row["repeat_count"] or 0),
+        }
+
+    def upsert_session_state(
+        self,
+        player_id: str,
+        *,
+        mode: str,
+        active_npc_id: str | None,
+        active_encounter_id: str | None,
+        active_thread_id: str | None,
+        last_bot_message: str,
+        repeat_count: int,
+    ) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO player_session_state(
+                    player_id, mode, active_npc_id, active_encounter_id, active_thread_id, last_bot_message, repeat_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    mode = excluded.mode,
+                    active_npc_id = excluded.active_npc_id,
+                    active_encounter_id = excluded.active_encounter_id,
+                    active_thread_id = excluded.active_thread_id,
+                    last_bot_message = excluded.last_bot_message,
+                    repeat_count = excluded.repeat_count,
+                    updated_ts = CURRENT_TIMESTAMP
+                """,
+                (
+                    player_id,
+                    mode,
+                    active_npc_id,
+                    active_encounter_id,
+                    active_thread_id,
+                    last_bot_message,
+                    repeat_count,
+                ),
+            )
+
+    def get_scene_memory(self, player_id: str) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT scene_json FROM player_scene_memory WHERE player_id = ?",
+            (player_id,),
+        ).fetchone()
+        if row is None:
+            return {}
+        try:
+            data = json.loads(row["scene_json"])
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def upsert_scene_memory(self, player_id: str, scene: dict[str, Any]) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO player_scene_memory(player_id, scene_json)
+                VALUES (?, ?)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    scene_json = excluded.scene_json,
+                    updated_ts = CURRENT_TIMESTAMP
+                """,
+                (player_id, json.dumps(scene, sort_keys=True)),
+            )
+
     def move_player(self, player_id: str, location_id: str) -> None:
         with self.tx() as conn:
             conn.execute("UPDATE players SET location_id=? WHERE player_id=?", (location_id, player_id))
@@ -86,6 +177,12 @@ class Store:
             (location_id,),
         ).fetchall()
 
+    def get_npc(self, npc_id: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT npc_id, name, location_id, is_key, alive FROM npcs WHERE npc_id = ?",
+            (npc_id,),
+        ).fetchone()
+
     def upsert_npc_profile(self, npc_id: str, persona_prompt: str) -> None:
         with self.tx() as conn:
             conn.execute(
@@ -121,6 +218,56 @@ class Store:
             (npc_id, player_id, limit),
         ).fetchall()
         return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+
+    def get_npc_dialogue_summary(self, npc_id: str, player_id: str) -> str:
+        row = self.conn.execute(
+            """
+            SELECT summary_text
+            FROM npc_dialogue_summaries
+            WHERE npc_id = ? AND player_id = ?
+            """,
+            (npc_id, player_id),
+        ).fetchone()
+        if row is None:
+            return ""
+        return str(row["summary_text"] or "")
+
+    def upsert_npc_dialogue_summary(self, npc_id: str, player_id: str, summary_text: str) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO npc_dialogue_summaries(npc_id, player_id, summary_text)
+                VALUES (?, ?, ?)
+                ON CONFLICT(npc_id, player_id) DO UPDATE SET
+                    summary_text = excluded.summary_text,
+                    updated_ts = CURRENT_TIMESTAMP
+                """,
+                (npc_id, player_id, summary_text),
+            )
+
+    def upsert_thread(
+        self,
+        player_id: str,
+        thread_id: str,
+        thread_type: str,
+        title: str,
+        last_message: str,
+        status: str = "ACTIVE",
+    ) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO player_threads(player_id, thread_id, thread_type, title, status, last_message)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(player_id, thread_id) DO UPDATE SET
+                    thread_type = excluded.thread_type,
+                    title = excluded.title,
+                    status = excluded.status,
+                    last_message = excluded.last_message,
+                    updated_ts = CURRENT_TIMESTAMP
+                """,
+                (player_id, thread_id, thread_type, title, status, last_message[:500]),
+            )
 
     def add_proposal(self, actor_id: str, proposal_type: str, content: str) -> None:
         with self.tx() as conn:
@@ -188,16 +335,16 @@ class Store:
             )
             return True, None
 
-    def get_latest_encounter(self, location_id: str) -> sqlite3.Row | None:
+    def get_latest_encounter(self, actor_id: str, location_id: str) -> sqlite3.Row | None:
         return self.conn.execute(
             """
-            SELECT encounter_id, location_id, state_json
+            SELECT encounter_id, actor_id, location_id, state_json
             FROM encounters
-            WHERE location_id = ?
+            WHERE actor_id = ? AND location_id = ?
             ORDER BY rowid DESC
             LIMIT 1
             """,
-            (location_id,),
+            (actor_id, location_id),
         ).fetchone()
 
     def update_encounter_state(self, encounter_id: str, state: dict[str, Any]) -> None:
@@ -210,3 +357,13 @@ class Store:
     def delete_encounter(self, encounter_id: str) -> None:
         with self.tx() as conn:
             conn.execute("DELETE FROM encounters WHERE encounter_id = ?", (encounter_id,))
+
+    def delete_actor_encounters(self, actor_id: str, location_id: str | None = None) -> None:
+        with self.tx() as conn:
+            if location_id is None:
+                conn.execute("DELETE FROM encounters WHERE actor_id = ?", (actor_id,))
+            else:
+                conn.execute(
+                    "DELETE FROM encounters WHERE actor_id = ? AND location_id = ?",
+                    (actor_id, location_id),
+                )
