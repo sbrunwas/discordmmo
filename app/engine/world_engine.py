@@ -47,9 +47,8 @@ class WorldEngine:
         session = self.store.get_session_state(actor_id)
         mode_before = session["mode"]
         player = self.store.get_player(actor_id)
-        context = self._intent_context(actor_id, player)
-        intent = parse_intent(text, llm_client=self.narrator_client, user_id=actor_id, context=context)
-        if intent.action == "HELP":
+        early_intent = parse_intent(text, llm_client=None, user_id=actor_id, context=None)
+        if early_intent.action == "HELP":
             return self._respond(
                 actor_id,
                 session=session,
@@ -63,7 +62,7 @@ class WorldEngine:
                 player=player,
                 thread_id=session.get("active_thread_id"),
             )
-        if intent.action == "START":
+        if early_intent.action == "START":
             self.store.create_player(actor_id, actor_name, "town_square")
             self.store.write_event(actor_id, "PLAYER_STARTED", {"name": actor_name})
             player = self.store.get_player(actor_id)
@@ -92,6 +91,39 @@ class WorldEngine:
             )
         self._maybe_run_npc_planner_tick()
 
+        # Keep conversational continuity deterministic and avoid burning intent-LLM calls on every follow-up turn.
+        npc_target = self._active_dialogue_npc_target(actor_id, player["location_id"])
+        if npc_target is not None and self._looks_like_dialogue_continuation(text):
+            talk = self._handle_talk(actor_id, text, player["location_id"], npc_target)
+            return self._respond(
+                actor_id,
+                session=session,
+                mode_before=mode_before,
+                mode_after="dialogue",
+                action="TALK",
+                message=self._talk_response_message(talk["outcome"], player["location_id"]),
+                player=player,
+                thread_id=talk["thread_id"],
+                active_npc_id=talk["npc_id"],
+            )
+
+        context = self._intent_context(actor_id, player)
+        intent = parse_intent(text, llm_client=self.narrator_client, user_id=actor_id, context=context)
+        if intent.action == "HELP":
+            return self._respond(
+                actor_id,
+                session=session,
+                mode_before=mode_before,
+                mode_after="explore",
+                action="HELP",
+                message=(
+                    "Commands: !help !start !stats !inventory !skills !respec !factions !recap !rest short !rest long !duel\n"
+                    f"{self._exploration_prompt()}"
+                ),
+                player=player,
+                thread_id=session.get("active_thread_id"),
+            )
+
         encounter_row = self.store.get_latest_encounter(actor_id, player["location_id"])
         if encounter_row is not None:
             combat = self._handle_active_combat(actor_id, player["location_id"], intent, encounter_row)
@@ -109,19 +141,17 @@ class WorldEngine:
                 active_encounter_id=combat["active_encounter_id"],
             )
 
-        npc_target = self._active_dialogue_npc_target(actor_id, player["location_id"])
         if npc_target is not None and self._should_continue_dialogue(text, intent.action):
             talk = self._handle_talk(actor_id, text, player["location_id"], npc_target)
-            return self._narrate_and_respond(
+            return self._respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="dialogue",
                 action="TALK",
-                outcome=talk["outcome"],
+                message=self._talk_response_message(talk["outcome"], player["location_id"]),
                 player=player,
                 thread_id=talk["thread_id"],
-                hint_type="explore",
                 active_npc_id=talk["npc_id"],
             )
 
@@ -197,16 +227,15 @@ class WorldEngine:
             )
         if intent.action == "TALK":
             talk = self._handle_talk(actor_id, text, player["location_id"], intent.target)
-            return self._narrate_and_respond(
+            return self._respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="dialogue",
                 action="TALK",
-                outcome=talk["outcome"],
+                message=self._talk_response_message(talk["outcome"], player["location_id"]),
                 player=player,
                 thread_id=talk["thread_id"],
-                hint_type="explore",
                 active_npc_id=talk["npc_id"],
             )
         if intent.action == "STATS":
@@ -1017,6 +1046,36 @@ class WorldEngine:
         if re.search(r"\b(move|go|rest|investigate)\b", lower):
             return False
         return True
+
+    def _looks_like_dialogue_continuation(self, text: str) -> bool:
+        lower = text.strip().lower()
+        if not lower:
+            return False
+        if lower.startswith("!"):
+            return False
+        blocked_prefixes = (
+            "move",
+            "go ",
+            "rest",
+            "investigate",
+            "talk ",
+            "look",
+            "help",
+            "stats",
+            "inventory",
+            "skills",
+            "respec",
+            "factions",
+            "recap",
+            "duel",
+            "start",
+        )
+        return not any(lower.startswith(prefix) for prefix in blocked_prefixes)
+
+    def _talk_response_message(self, outcome: EngineOutcome, location_id: str) -> str:
+        if not outcome.npc_reply:
+            return f"No one answers clearly.\n\n{self._exploration_prompt(location_id)}"
+        return f"{outcome.npc_reply}\n\n{self._exploration_prompt(location_id)}"
 
     def _build_npc_summary(
         self,

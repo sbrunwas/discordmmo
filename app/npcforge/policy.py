@@ -75,20 +75,35 @@ def _relationship_reply(sheet: NPCSheet, state: NPCState, obs: Observation, play
     return "I'll answer what I can, but keep your expectations practical.", candidates
 
 
+def _should_use_llm_dialogue(sheet: NPCSheet, state: NPCState, obs: Observation) -> bool:
+    utterance = (obs.player_utterance or "").strip()
+    if not utterance:
+        return False
+    if len(utterance) < 24 and "?" not in utterance:
+        return False
+    player_id = obs.player_id or "system"
+    if state.grudge_flags_by_player.get(player_id):
+        return False
+    stage = int(state.greeting_stage_by_player.get(player_id, 0))
+    # Use template-first most turns; invoke LLM periodically for richer variation.
+    if stage % 3 != 2:
+        return False
+    return True
+
+
 def _llm_dialogue(sheet: NPCSheet, state: NPCState, obs: Observation, llm_client) -> str:
     if llm_client is None:
         return ""
+    if not _should_use_llm_dialogue(sheet, state, obs):
+        return ""
     prompt = (
-        "You are an NPC in a grounded fantasy MMO. Reply in-character in 1-3 sentences without game mechanics.\n"
+        "Reply as this NPC in 1-2 in-character sentences. No game mechanics.\n"
         f"Name: {sheet.name}\n"
-        f"Voice: {sheet.voice_style}\n"
-        f"Alignment: {sheet.alignment}\n"
-        f"Motivation: {sheet.motivation}\n"
-        f"Fear: {sheet.fear}\n"
-        f"Current goal: {state.current_goal}\n"
-        f"Memory summary: {state.memory_summary}\n"
+        f"Voice: {sheet.voice_style}; Alignment: {sheet.alignment}\n"
+        f"Goal: {state.current_goal}\n"
+        f"Memory: {state.memory_summary[:220]}\n"
         f"Player said: {obs.player_utterance or ''}\n"
-        "Respond only with the NPC dialogue."
+        "Return only dialogue."
     )
     data = llm_client.complete_json(prompt, user_id=obs.player_id or "system", temperature=0.7)
     text = str(data.get("text", "")).strip()
