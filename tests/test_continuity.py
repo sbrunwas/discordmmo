@@ -22,7 +22,7 @@ def test_confidence_gate_returns_clarification(tmp_path):
     response = engine.handle_message("p1", "Hero", "could you maybe do something")
 
     assert response.ok
-    assert "basic parser" in response.message.lower()
+    assert response.message
     assert store.get_session_state("p1")["mode"] == "explore"
 
 
@@ -71,3 +71,33 @@ def test_observability_log_includes_mode_and_thread(tmp_path, caplog):
     assert "turn_resolved" in logs
     assert "mode_before" in logs
     assert "thread=" in logs
+
+
+class CaptureNarrationClient:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def complete_json(self, prompt: str, user_id: str = "system", **kwargs) -> dict:
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            return {"action": "LOOK", "target": None, "confidence": 0.9, "clarify_question": None}
+        self.prompts.append(prompt)
+        if len(self.prompts) == 1:
+            return {"text": "You study the square while the crowd moves around the old stones."}
+        return {"text": "You notice details you missed before, the same plaza now seen from a sharper angle."}
+
+
+def test_repeated_look_passes_last_narration_to_client(tmp_path):
+    store = Store(str(tmp_path / "look_history.db"))
+    client = CaptureNarrationClient()
+    engine = WorldEngine(store, client, rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+
+    first = engine.handle_message("p1", "Hero", "look")
+    second = engine.handle_message("p1", "Hero", "look")
+
+    assert first.ok and second.ok
+    assert len(client.prompts) >= 2
+    assert "last_narration" in client.prompts[1]
+    assert "You study the square while the crowd moves around the old stones." in client.prompts[1]

@@ -35,6 +35,19 @@ def test_move_resolution_uses_location_alias(tmp_path):
     assert player["location_id"] == "ruin_upper"
 
 
+def test_first_visit_triggers_scene_description(tmp_path):
+    store = Store(str(tmp_path / "visit_flag.db"))
+    engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
+    engine.initialize_world()
+    assert engine.handle_message("p1", "Hero", "!start").ok
+    assert not store.has_visited_location("p1", "ruin_upper")
+
+    move = engine.handle_message("p1", "Hero", "move ruin")
+
+    assert move.ok
+    assert store.has_visited_location("p1", "ruin_upper")
+
+
 def test_active_combat_state_is_handled(tmp_path):
     store = Store(str(tmp_path / "combat.db"))
     engine = WorldEngine(store, LLMClient(Settings(llm_backend="stub"), store=store), rng_seed=10)
@@ -45,7 +58,9 @@ def test_active_combat_state_is_handled(tmp_path):
     response = engine.handle_message("p1", "Hero", "What is the danger?")
 
     assert response.ok
-    assert "Combat is active" in response.message
+    assert "roll:" not in response.message
+    assert "HP:" not in response.message
+    assert "XP:" not in response.message
     assert encounter_id in store.conn.execute("SELECT encounter_id FROM encounters").fetchone()["encounter_id"]
 
 
@@ -59,7 +74,9 @@ def test_investigate_can_resolve_active_combat(tmp_path):
     response = engine.handle_message("p1", "Hero", "investigate enemy")
 
     assert response.ok
-    assert "end the fight" in response.message
+    assert "roll:" not in response.message
+    assert "HP:" not in response.message
+    assert "XP:" not in response.message
     gone = store.conn.execute("SELECT encounter_id FROM encounters WHERE encounter_id = ?", (encounter_id,)).fetchone()
     assert gone is None
 
@@ -87,7 +104,7 @@ def test_talk_to_npc_persists_dialogue_memory(tmp_path):
     response = engine.handle_message("p1", "Hero", "talk to scholar ione about the runes")
 
     assert response.ok
-    assert "Scholar Ione:" in response.message
+    assert not response.message.startswith("Scholar Ione:")
     memory_rows = store.conn.execute(
         "SELECT COUNT(*) AS c FROM npc_dialogue_memory WHERE npc_id = 'scholar_ione' AND player_id = 'p1'"
     ).fetchone()["c"]
@@ -119,7 +136,7 @@ def test_unknown_follow_up_continues_last_npc_dialogue(tmp_path):
     follow_up = engine.handle_message("p1", "Hero", "What do you think causes that?")
 
     assert follow_up.ok
-    assert "Scholar Ione:" in follow_up.message
+    assert not follow_up.message.startswith("Scholar Ione:")
 
 
 class FakeStoryClient:
@@ -143,4 +160,4 @@ def test_dialogue_continues_when_intent_llm_returns_look(tmp_path):
 
     assert first.ok
     assert second.ok
-    assert "Traveler Sera:" in second.message
+    assert not second.message.startswith("Traveler Sera:")

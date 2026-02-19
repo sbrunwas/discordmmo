@@ -146,6 +146,23 @@ class Store:
                 (player_id, json.dumps(scene, sort_keys=True)),
             )
 
+    def has_visited_location(self, player_id: str, location_id: str) -> bool:
+        scene = self.get_scene_memory(player_id)
+        visited = scene.get("locations_visited", [])
+        if not isinstance(visited, list):
+            return False
+        return location_id in visited
+
+    def mark_location_visited(self, player_id: str, location_id: str) -> None:
+        scene = self.get_scene_memory(player_id)
+        visited = scene.get("locations_visited", [])
+        if not isinstance(visited, list):
+            visited = []
+        if location_id not in visited:
+            visited.append(location_id)
+        scene["locations_visited"] = visited
+        self.upsert_scene_memory(player_id, scene)
+
     def move_player(self, player_id: str, location_id: str) -> None:
         with self.tx() as conn:
             conn.execute("UPDATE players SET location_id=? WHERE player_id=?", (location_id, player_id))

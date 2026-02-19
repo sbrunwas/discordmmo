@@ -11,8 +11,8 @@ from app.engine.combat_engine import trigger_combat
 from app.engine.rules_engine import death_save_roll
 from app.llm.npc_dialogue import generate_npc_reply
 from app.llm.intent_parser import parse_intent
-from app.llm.narrator import narrate
-from app.models.core import ActionResult
+from app.llm.narrator import narrate_outcome
+from app.models.core import ActionResult, EngineOutcome
 
 log = logging.getLogger(__name__)
 
@@ -87,15 +87,16 @@ class WorldEngine:
         encounter_row = self.store.get_latest_encounter(actor_id, player["location_id"])
         if encounter_row is not None:
             combat = self._handle_active_combat(actor_id, player["location_id"], intent, encounter_row)
-            return self._respond(
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after=combat["mode_after"],
                 action=intent.action,
-                message=combat["message"],
+                outcome=combat["outcome"],
                 player=player,
                 thread_id=combat["thread_id"],
+                hint_type=combat["hint_type"],
                 active_npc_id=None,
                 active_encounter_id=combat["active_encounter_id"],
             )
@@ -103,15 +104,16 @@ class WorldEngine:
         npc_target = self._active_dialogue_npc_target(actor_id, player["location_id"])
         if npc_target is not None and self._should_continue_dialogue(text, intent.action):
             talk = self._handle_talk(actor_id, text, player["location_id"], npc_target)
-            return self._respond(
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="dialogue",
                 action="TALK",
-                message=talk["message"],
+                outcome=talk["outcome"],
                 player=player,
                 thread_id=talk["thread_id"],
+                hint_type="explore",
                 active_npc_id=talk["npc_id"],
             )
 
@@ -130,48 +132,73 @@ class WorldEngine:
             )
 
         if intent.action == "LOOK":
-            loc = self.store.get_location(player["location_id"])
-            scene = loc["description"] if loc else "The world flickers uncertainly."
-            text = narrate(self.narrator_client, scene, "look", user_id=actor_id)
-            return self._respond(
+            outcome = EngineOutcome(
+                action="LOOK",
+                result="looked",
+                roll=None,
+                hp_delta=0,
+                xp_delta=0,
+                location_id=player["location_id"],
+                npc_name=None,
+                npc_reply=None,
+                is_scene_description=True,
+            )
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="explore",
                 action="LOOK",
-                message=f"{text}\n\n{self._exploration_prompt(player['location_id'])}",
+                outcome=outcome,
                 player=player,
                 thread_id=session.get("active_thread_id"),
+                hint_type="explore",
                 active_npc_id=None,
             )
         if intent.action == "MOVE":
             target = self._resolve_move_target(intent.target)
+            was_visited = self.store.has_visited_location(actor_id, target)
             self.store.move_player(actor_id, target)
             self.store.write_event(actor_id, "PLAYER_MOVED", {"to": target})
+            if not was_visited:
+                self.store.mark_location_visited(actor_id, target)
             player = self.store.get_player(actor_id)
-            return self._respond(
+            outcome = EngineOutcome(
+                action="MOVE",
+                result="moved",
+                roll=None,
+                hp_delta=0,
+                xp_delta=0,
+                location_id=target,
+                npc_name=None,
+                npc_reply=None,
+                is_scene_description=not was_visited,
+            )
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="explore",
                 action="MOVE",
-                message=f"You move to {target}.\n{self._exploration_prompt(target)}",
+                outcome=outcome,
                 player=player,
                 thread_id=f"travel:{target}",
+                hint_type="explore",
                 active_npc_id=None,
                 active_encounter_id=None,
             )
         if intent.action == "TALK":
             talk = self._handle_talk(actor_id, text, player["location_id"], intent.target)
-            return self._respond(
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="dialogue",
                 action="TALK",
-                message=talk["message"],
+                outcome=talk["outcome"],
                 player=player,
                 thread_id=talk["thread_id"],
+                hint_type="explore",
                 active_npc_id=talk["npc_id"],
             )
         if intent.action == "STATS":
@@ -257,45 +284,83 @@ class WorldEngine:
             roll = death_save_roll(self.rng)
             payload = {"roll": roll, "discovery": "constellation sigil" if roll >= 10 else "old mortar dust"}
             self.store.write_event(actor_id, "INVESTIGATED", payload)
+            xp_delta = 0
             if roll >= 10:
                 self.store.update_player_progress(actor_id, xp_delta=1)
+                xp_delta = 1
             if roll >= 15:
                 encounter = trigger_combat(self.store, actor_id, player["location_id"])
-                return self._respond(
+                outcome = EngineOutcome(
+                    action="INVESTIGATE",
+                    result="combat_started",
+                    roll=roll,
+                    hp_delta=0,
+                    xp_delta=xp_delta,
+                    location_id=player["location_id"],
+                    npc_name=None,
+                    npc_reply=None,
+                    is_scene_description=False,
+                )
+                return self._narrate_and_respond(
                     actor_id,
                     session=session,
                     mode_before=mode_before,
                     mode_after="combat",
                     action="INVESTIGATE",
-                    message=f"You uncover danger. Combat starts: {encounter}\n{self._combat_prompt()}",
+                    outcome=outcome,
                     player=player,
                     thread_id=f"combat:{encounter}",
+                    hint_type="combat",
                     active_npc_id=None,
                     active_encounter_id=encounter,
                 )
             discovery_thread = "mystery:constellation_sigil" if payload["discovery"] == "constellation sigil" else "mystery:ruin_dust"
-            return self._respond(
+            outcome = EngineOutcome(
+                action="INVESTIGATE",
+                result="discovery_sigil" if payload["discovery"] == "constellation sigil" else "discovery_dust",
+                roll=roll,
+                hp_delta=0,
+                xp_delta=xp_delta,
+                location_id=player["location_id"],
+                npc_name=None,
+                npc_reply=None,
+                is_scene_description=False,
+            )
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="explore",
                 action="INVESTIGATE",
-                message=f"You investigate and find {payload['discovery']}.\n{self._exploration_prompt(player['location_id'])}",
+                outcome=outcome,
                 player=player,
                 thread_id=discovery_thread,
+                hint_type="explore",
                 active_npc_id=None,
             )
         if intent.action in {"REST_SHORT", "REST_LONG"}:
             self.store.write_event(actor_id, intent.action, {})
-            return self._respond(
+            outcome = EngineOutcome(
+                action=intent.action,
+                result="rested",
+                roll=None,
+                hp_delta=0,
+                xp_delta=0,
+                location_id=player["location_id"],
+                npc_name=None,
+                npc_reply=None,
+                is_scene_description=False,
+            )
+            return self._narrate_and_respond(
                 actor_id,
                 session=session,
                 mode_before=mode_before,
                 mode_after="explore",
                 action=intent.action,
-                message=f"You take time to recover.\n{self._exploration_prompt(player['location_id'])}",
+                outcome=outcome,
                 player=player,
                 thread_id=session.get("active_thread_id"),
+                hint_type="explore",
                 active_npc_id=None,
             )
         return self._respond(
@@ -348,7 +413,7 @@ class WorldEngine:
             context["nearby_npcs"] = [row["name"] for row in self.store.list_npcs_at_location(location["location_id"])]
         return context
 
-    def _handle_active_combat(self, actor_id: str, location_id: str, intent, encounter_row) -> dict[str, str | None]:
+    def _handle_active_combat(self, actor_id: str, location_id: str, intent, encounter_row) -> dict[str, object]:
         state = json.loads(encounter_row["state_json"])
         encounter_id = encounter_row["encounter_id"]
         enemy_role = state.get("enemy_role", "threat")
@@ -360,20 +425,42 @@ class WorldEngine:
 
         if intent.action in {"LOOK", "UNKNOWN"}:
             return {
-                "message": f"Combat is active against a {enemy_role} (turn {turn}). {self._combat_prompt()}",
+                "outcome": EngineOutcome(
+                    action=intent.action,
+                    result="combat_status",
+                    roll=None,
+                    hp_delta=0,
+                    xp_delta=0,
+                    location_id=location_id,
+                    npc_name=None,
+                    npc_reply=None,
+                    is_scene_description=False,
+                ),
                 "mode_after": "combat",
                 "thread_id": f"combat:{encounter_id}",
                 "active_encounter_id": encounter_id,
+                "hint_type": "combat",
             }
 
         if intent.action == "MOVE":
             self.store.delete_actor_encounters(actor_id, location_id)
             self.store.write_event(actor_id, "COMBAT_DISENGAGED", {"encounter_id": encounter_id, "location_id": location_id})
             return {
-                "message": f"You break away and disengage from combat.\n{self._exploration_prompt(location_id)}",
+                "outcome": EngineOutcome(
+                    action="MOVE",
+                    result="disengaged",
+                    roll=None,
+                    hp_delta=0,
+                    xp_delta=0,
+                    location_id=location_id,
+                    npc_name=None,
+                    npc_reply=None,
+                    is_scene_description=False,
+                ),
                 "mode_after": "explore",
                 "thread_id": f"travel:{location_id}",
                 "active_encounter_id": None,
+                "hint_type": "explore",
             }
 
         if intent.action == "INVESTIGATE":
@@ -388,10 +475,21 @@ class WorldEngine:
                     {"encounter_id": encounter_id, "location_id": location_id, "roll": roll, "bonus": bonus, "result": "won"},
                 )
                 return {
-                    "message": f"You outmaneuver the {enemy_role} and end the fight (roll {roll} + bonus {bonus} = {total}).\n{self._exploration_prompt(location_id)}",
+                    "outcome": EngineOutcome(
+                        action="INVESTIGATE",
+                        result="combat_won",
+                        roll=roll,
+                        hp_delta=0,
+                        xp_delta=3,
+                        location_id=location_id,
+                        npc_name=None,
+                        npc_reply=None,
+                        is_scene_description=False,
+                    ),
                     "mode_after": "explore",
                     "thread_id": f"travel:{location_id}",
                     "active_encounter_id": None,
+                    "hint_type": "explore",
                 }
 
             state["turn"] = turn + 1
@@ -407,23 +505,56 @@ class WorldEngine:
             if isinstance(hp, int) and hp <= 0:
                 self.store.delete_actor_encounters(actor_id, location_id)
                 return {
-                    "message": f"You are overwhelmed and collapse. Locals drag you to safety. Combat ends.\n{self._exploration_prompt(location_id)}",
+                    "outcome": EngineOutcome(
+                        action="INVESTIGATE",
+                        result="combat_lost",
+                        roll=roll,
+                        hp_delta=-2,
+                        xp_delta=0,
+                        location_id=location_id,
+                        npc_name=None,
+                        npc_reply=None,
+                        is_scene_description=False,
+                    ),
                     "mode_after": "explore",
                     "thread_id": f"travel:{location_id}",
                     "active_encounter_id": None,
+                    "hint_type": "explore",
                 }
             return {
-                "message": f"The {enemy_role} presses in (roll {roll} + bonus {bonus} = {total}). Combat continues (turn {state['turn']}). HP now {hp}.",
+                "outcome": EngineOutcome(
+                    action="INVESTIGATE",
+                    result="combat_hit",
+                    roll=roll,
+                    hp_delta=-2,
+                    xp_delta=0,
+                    location_id=location_id,
+                    npc_name=None,
+                    npc_reply=None,
+                    is_scene_description=False,
+                ),
                 "mode_after": "combat",
                 "thread_id": f"combat:{encounter_id}",
                 "active_encounter_id": encounter_id,
+                "hint_type": "combat",
             }
 
         return {
-            "message": f"Combat is active. {self._combat_prompt()}",
+            "outcome": EngineOutcome(
+                action=intent.action,
+                result="combat_status",
+                roll=None,
+                hp_delta=0,
+                xp_delta=0,
+                location_id=location_id,
+                npc_name=None,
+                npc_reply=None,
+                is_scene_description=False,
+            ),
             "mode_after": "combat",
             "thread_id": f"combat:{encounter_id}",
             "active_encounter_id": encounter_id,
+            "hint_type": "combat",
         }
 
     def _exploration_prompt(self, location_id: str = "town_square") -> str:
@@ -510,15 +641,43 @@ class WorldEngine:
         if self.store.get_npc_profile(npc_id) is None:
             self.store.upsert_npc_profile(npc_id, persona)
 
-    def _handle_talk(self, actor_id: str, player_text: str, location_id: str, target: str | None) -> dict[str, str]:
+    def _handle_talk(self, actor_id: str, player_text: str, location_id: str, target: str | None) -> dict[str, object]:
         npcs = self.store.list_npcs_at_location(location_id)
         if not npcs:
-            return {"message": "No one here is available to talk right now.", "npc_id": "", "thread_id": "thread:none"}
+            return {
+                "outcome": EngineOutcome(
+                    action="TALK",
+                    result="talk_no_npc",
+                    roll=None,
+                    hp_delta=0,
+                    xp_delta=0,
+                    location_id=location_id,
+                    npc_name=None,
+                    npc_reply=None,
+                    is_scene_description=False,
+                ),
+                "npc_id": "",
+                "thread_id": "thread:none",
+            }
 
         npc = self._select_npc(npcs, target)
         if npc is None:
             available = ", ".join(row["name"] for row in npcs)
-            return {"message": f"I couldn't tell who you meant. Try one of: {available}.", "npc_id": "", "thread_id": "thread:none"}
+            return {
+                "outcome": EngineOutcome(
+                    action="TALK",
+                    result="talk_ambiguous",
+                    roll=None,
+                    hp_delta=0,
+                    xp_delta=0,
+                    location_id=location_id,
+                    npc_name=None,
+                    npc_reply=f"I couldn't tell who you meant. Try one of: {available}.",
+                    is_scene_description=False,
+                ),
+                "npc_id": "",
+                "thread_id": "thread:none",
+            }
 
         profile = self.store.get_npc_profile(npc["npc_id"])
         persona = profile["persona_prompt"] if profile else f"{npc['name']} is a local resident."
@@ -553,7 +712,21 @@ class WorldEngine:
             reply,
             status="ACTIVE",
         )
-        return {"message": f"{npc['name']}: {reply}\n{self._exploration_prompt(location_id)}", "npc_id": npc["npc_id"], "thread_id": thread_id}
+        return {
+            "outcome": EngineOutcome(
+                action="TALK",
+                result="talk_replied",
+                roll=None,
+                hp_delta=0,
+                xp_delta=0,
+                location_id=location_id,
+                npc_name=npc["name"],
+                npc_reply=reply,
+                is_scene_description=False,
+            ),
+            "npc_id": npc["npc_id"],
+            "thread_id": thread_id,
+        }
 
     def _select_npc(self, npcs, target: str | None):
         if not target:
@@ -643,6 +816,61 @@ class WorldEngine:
         merged = (base + addition).strip()
         return merged[:600]
 
+    def _narrate_and_respond(
+        self,
+        actor_id: str,
+        *,
+        session: dict,
+        mode_before: str,
+        mode_after: str,
+        action: str,
+        outcome: EngineOutcome,
+        player,
+        thread_id: str | None,
+        hint_type: str,
+        ok: bool = True,
+        active_npc_id: str | None = None,
+        active_encounter_id: str | None = None,
+    ) -> ActionResult:
+        location_id = outcome.location_id or (player["location_id"] if player is not None else "town_square")
+        location = self.store.get_location(location_id)
+        scene_memory = self.store.get_scene_memory(actor_id)
+        last_narration = str(scene_memory.get("last_narration", ""))
+        last_npc_exchange = ""
+        if outcome.npc_name:
+            last_npc_exchange = f"{outcome.npc_name}: {outcome.npc_reply or ''}"
+        narration = narrate_outcome(
+            self.narrator_client,
+            outcome=outcome,
+            location_name=location["name"] if location is not None else "Unknown",
+            location_description=location["description"] if location is not None else "",
+            recent_events=self.store.get_recent_events(actor_id, limit=4),
+            last_npc_exchange=last_npc_exchange,
+            last_narration=last_narration,
+            session_state=session,
+            user_id=actor_id,
+        )
+        hint = self._combat_prompt() if hint_type == "combat" else self._exploration_prompt(location_id)
+        final_message = f"{narration}\n\n{hint}"
+
+        updated_scene = self.store.get_scene_memory(actor_id)
+        updated_scene["last_narration"] = narration
+        self.store.upsert_scene_memory(actor_id, updated_scene)
+
+        return self._respond(
+            actor_id,
+            session=session,
+            mode_before=mode_before,
+            mode_after=mode_after,
+            action=action,
+            message=final_message,
+            player=player,
+            thread_id=thread_id,
+            ok=ok,
+            active_npc_id=active_npc_id,
+            active_encounter_id=active_encounter_id,
+        )
+
     def _respond(
         self,
         actor_id: str,
@@ -678,7 +906,10 @@ class WorldEngine:
                 final_message,
                 status="ACTIVE",
             )
-        self.store.upsert_scene_memory(actor_id, self._scene_memory_snapshot(mode_after, action, player, thread_id, final_message))
+        snapshot = self._scene_memory_snapshot(mode_after, action, player, thread_id, final_message)
+        existing_scene = self.store.get_scene_memory(actor_id)
+        existing_scene.update(snapshot)
+        self.store.upsert_scene_memory(actor_id, existing_scene)
         log.info(
             "turn_resolved actor=%s mode_before=%s intent=%s mode_after=%s thread=%s",
             actor_id,
